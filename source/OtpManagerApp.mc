@@ -3,6 +3,9 @@ import Toybox.Lang;
 import Toybox.System;
 import Toybox.WatchUi;
 
+// Every screen change is a switchToView: nothing is ever pushed, so the view
+// stack is always exactly one deep. A stale view left underneath a newer one is
+// otherwise reachable with Back, and its menu ids would index the current store.
 class OtpManagerApp extends Application.AppBase {
 
     private var _config as Config;
@@ -13,6 +16,11 @@ class OtpManagerApp extends Application.AppBase {
     // Bumped whenever the configuration is replaced. An in-flight refresh
     // carries the generation it began under, and is dropped if that is stale.
     private var _generation as Number = 0;
+
+    // True from the moment a refresh starts until it succeeds or fails. While
+    // it is set, the status screen is the only reachable screen, so a late
+    // callback cannot land on top of something the wearer has navigated to.
+    private var _refreshing as Boolean = false;
 
     function initialize() {
         AppBase.initialize();
@@ -30,6 +38,7 @@ class OtpManagerApp extends Application.AppBase {
     // a code, from the previous configuration stays on display.
     function onSettingsChanged() as Void {
         _generation++;
+        _refreshing = false;
         _config = new Config();
         _store = new AccountStore(_config);
         _api = new OtpManagerApi(_config, _generation);
@@ -39,17 +48,25 @@ class OtpManagerApp extends Application.AppBase {
     }
 
     function refreshFromMenu() as Void {
+        // Two chains would share this API instance's _hasPassword and _iv, and
+        // could complete out of order.
+        if (_refreshing) {
+            return;
+        }
+
         var view = status(Rez.Strings.Loading);
         WatchUi.switchToView(view, new StatusDelegate(), WatchUi.SLIDE_IMMEDIATE);
-        _api.refresh(method(:onRefresh));
+        beginRefresh();
     }
 
-    // Used by StatusDelegate to get back to a cached list after an error.
+    // Used by StatusDelegate and CodeDelegate to get back to the list. Refused
+    // mid-refresh: leaving the status screen then would let the completion
+    // callback replace whatever the wearer had moved on to.
     function showListIfLoaded() as Boolean {
-        if (!_store.isLoaded()) {
+        if (_refreshing || !_store.isLoaded()) {
             return false;
         }
-        WatchUi.switchToView(buildMenu(), new AccountMenuDelegate(), WatchUi.SLIDE_IMMEDIATE);
+        showList();
         return true;
     }
 
@@ -58,8 +75,8 @@ class OtpManagerApp extends Application.AppBase {
         if (index < 0 || index >= accounts.size()) {
             return;
         }
-        WatchUi.pushView(new CodeView(accounts[index], _store.secretBox()),
-            new WatchUi.BehaviorDelegate(), WatchUi.SLIDE_LEFT);
+        WatchUi.switchToView(new CodeView(accounts[index], _store.secretBox()),
+            new CodeDelegate(), WatchUi.SLIDE_LEFT);
     }
 
     function onRefresh(generation as Number, result as OtpManagerApi.Result, payload as Dictionary?, message as String?) as Void {
@@ -67,12 +84,23 @@ class OtpManagerApp extends Application.AppBase {
             return;
         }
 
+        _refreshing = false;
+
         if (result != OtpManagerApi.RESULT_OK || payload == null) {
             report(explain(result, message));
             return;
         }
 
         _store.update(payload);
+        showList();
+    }
+
+    private function beginRefresh() as Void {
+        _refreshing = true;
+        _api.refresh(method(:onRefresh));
+    }
+
+    private function showList() as Void {
         WatchUi.switchToView(buildMenu(), new AccountMenuDelegate(), WatchUi.SLIDE_IMMEDIATE);
     }
 
@@ -92,7 +120,7 @@ class OtpManagerApp extends Application.AppBase {
         }
 
         var view = status(Rez.Strings.Loading);
-        _api.refresh(method(:onRefresh));
+        beginRefresh();
         return [view, new StatusDelegate()];
     }
 
@@ -112,7 +140,7 @@ class OtpManagerApp extends Application.AppBase {
         }
 
         // Without this the empty vault is a lone Refresh row with no explanation.
-        if (accounts.size() == 0) {
+        if (_store.isEmpty()) {
             menu.addItem(new AccountMenuItem(
                 :none, WatchUi.loadResource(Rez.Strings.NoAccountsRow) as String, null));
         }

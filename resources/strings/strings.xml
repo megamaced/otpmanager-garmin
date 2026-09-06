@@ -8,7 +8,6 @@
 
     <string id="Loading">Loading…</string>
     <string id="NotConfigured">Open the app settings in Garmin Connect and fill in your server details.</string>
-    <string id="NoAccounts">No OTP accounts</string>
     <string id="Refresh">Refresh</string>
     <string id="UnsupportedHotp">HOTP accounts are not supported.</string>
     <string id="UnsupportedAlgorithm">SHA512 is not supported by this watch.</string>
