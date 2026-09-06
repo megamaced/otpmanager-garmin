@@ -1,0 +1,11 @@
+# Copy to local.properties and fill in. That file is gitignored.
+#
+# Sideloaded Connect IQ apps cannot be configured from Garmin Connect or the
+# Connect IQ app — Garmin does not support settings for them. `./build.sh local`
+# therefore bakes these values into the build as property defaults.
+#
+# The resulting .prg contains your credentials in the clear. Keep it local.
+serverUrl=https://cloud.example.com
+username=alice
+appPassword=xxxx-xxxx-xxxx-xxxx-xxxx
+otpPassword=your-otp-manager-vault-password

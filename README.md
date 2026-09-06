@@ -100,31 +100,45 @@ file.
 
 ## Setup
 
-Do this after the app is on the watch. It will say so on launch if the settings
-are missing.
+**Garmin supports no settings UI for sideloaded apps.** A sideloaded app does
+not appear in the Connect IQ mobile app at all — "My Device Apps" lists only
+store-installed apps — and Garmin Express does not offer its settings either.
+So there is nowhere to type the server details for a build installed the way
+described above.
 
-### 1. Create a Nextcloud app password
+The way round it is to bake the configuration into the build.
 
-In Nextcloud, go to **Settings → Security → Devices & sessions** and create an
-app password. Use that, not your login password — it can be revoked on its own
-and it sidesteps two-factor prompts.
+```bash
+cp local.properties.example local.properties
+$EDITOR local.properties          # gitignored; never commit it
+./build.sh local
+```
 
-### 2. Fill in the app settings
-
-In Garmin Connect Mobile: **⋯ → Connect IQ Store → My Device → Apps → OTP
-Manager → Settings**. In Garmin Express: select the device, then **Apps**.
+That writes `build/otpmanager-venu3s.prg` with your values as the property
+defaults. Sideload it exactly as above. `resources/properties.xml` is restored
+afterwards — including if the build fails — so credentials cannot be left in the
+working tree.
 
 | Setting | Example |
 |---|---|
-| Nextcloud URL | `https://cloud.example.com` (must be `https://`) |
-| Nextcloud user | `alice` |
-| Nextcloud app password | the app password from step 1 |
-| OTP Manager password | your OTP Manager vault password |
+| `serverUrl` | `https://cloud.example.com` (must be `https://`) |
+| `username` | your Nextcloud username |
+| `appPassword` | Nextcloud → **Settings → Security → Devices & sessions** |
+| `otpPassword` | your OTP Manager vault password |
 
-Leave **OTP Manager password** as any non-empty value if your vault has no
-encryption password set; it is ignored in that case.
+Use a Nextcloud **app password**, not your login password — it can be revoked on
+its own and it sidesteps two-factor prompts. Leave `otpPassword` as any
+non-empty value if your vault has no encryption password; it is ignored then.
 
-Changing the URL, user or vault password clears the cached accounts.
+To change any of it, edit `local.properties`, rebuild and copy the new `.prg`
+over the old one.
+
+> The resulting `.prg` contains both passwords in the clear, so treat that file
+> the way you would treat the credentials themselves.
+
+> If the app is ever published to the Connect IQ Store, none of this applies:
+> store-installed apps get the normal settings screen in Garmin Connect, and the
+> committed `properties.xml` deliberately ships with empty defaults for that.
 
 ## Limitations
 

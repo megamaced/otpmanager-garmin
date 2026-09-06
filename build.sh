@@ -14,6 +14,18 @@ DEVICES=(venu3s venu3 vivoactive5)
 
 mkdir -p build
 
+# Sideloaded apps get no settings UI from Garmin, so a personal build bakes the
+# values from local.properties in as defaults. properties.xml is restored on the
+# way out, including on failure, so credentials are never left in the tree.
+if [ "${1:-}" = "local" ]; then
+    trap 'git checkout -- resources/properties.xml' EXIT
+    python3 tools/bake-properties.py
+    "$SDK/bin/monkeyc" -f monkey.jungle -o build/otpmanager-venu3s.prg \
+        -y "$KEY" -d venu3s -w -l 3
+    echo "built build/otpmanager-venu3s.prg with local.properties baked in"
+    exit 0
+fi
+
 if [ "${1:-}" = "test" ]; then
     "$SDK/bin/monkeyc" -f monkey.jungle -o build/test.prg -y "$KEY" \
         -d venu3s -w -l 3 --unit-test
