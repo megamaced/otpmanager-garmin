@@ -15,4 +15,7 @@
     <string id="DecryptFailed">Could not decrypt. Check the OTP Manager password.</string>
     <string id="AuthFailed">Nextcloud rejected the username or app password.</string>
     <string id="Unreachable">Could not reach the server.</string>
+    <string id="InsecureUrl">The Nextcloud URL must start with https://</string>
+    <string id="NoAccountsRow">No accounts</string>
+    <string id="NoPhone">No phone connection.</string>
 </resources>

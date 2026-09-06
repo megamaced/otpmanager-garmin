@@ -112,3 +112,43 @@ function assertTotp(secret as String, time as Number, digits as Number, algorith
     Test.assertMessage(actual.equals(expected),
         "t=" + time.toString() + " expected " + expected + " got " + actual);
 }
+
+(:test)
+function testOnlyHttpsUrlsAreAccepted(logger as Logger) as Boolean {
+    Test.assertMessage(Config.isHttpsUrl("https://cloud.example.com"), "https should be accepted");
+    Test.assertMessage(!Config.isHttpsUrl("http://cloud.example.com"), "plain http must be rejected");
+    Test.assertMessage(!Config.isHttpsUrl("cloud.example.com"), "a bare host must be rejected");
+    Test.assertMessage(!Config.isHttpsUrl(""), "an empty URL must be rejected");
+    Test.assertMessage(!Config.isHttpsUrl("https://"), "a scheme with no host must be rejected");
+    return true;
+}
+
+// GET /accounts returns accounts shared with the user alongside their own.
+// A locked share is encrypted with the sharing password, not the vault key.
+(:test)
+function testSharedAndDeletedAccountsAreSkipped(logger as Logger) as Boolean {
+    var api = new OtpManagerApi(new Config(), 0);
+    var parsed = api.toAccounts([
+        account("mine", false, null),
+        account("shared", true, null),
+        account("binned", false, "2026-01-01 00:00:00")
+    ]);
+
+    Test.assertEqual(parsed.size(), 1);
+    Test.assertEqual(parsed[0]["name"] as String, "mine");
+    return true;
+}
+
+function account(name as String, shared as Boolean, deletedAt as String?) as Dictionary {
+    return {
+        "name" => name,
+        "issuer" => "Example",
+        "secret" => RFC_SECRET_SHA1,
+        "type" => "totp",
+        "period" => 30,
+        "algorithm" => "SHA1",
+        "digits" => 6,
+        "isShared" => shared,
+        "deletedAt" => deletedAt
+    };
+}

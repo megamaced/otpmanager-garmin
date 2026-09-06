@@ -107,7 +107,7 @@ Manager → Settings**. In Garmin Express: select the device, then **Apps**.
 
 | Setting | Example |
 |---|---|
-| Nextcloud URL | `https://cloud.example.com` |
+| Nextcloud URL | `https://cloud.example.com` (must be `https://`) |
 | Nextcloud user | `alice` |
 | Nextcloud app password | the app password from step 1 |
 | OTP Manager password | your OTP Manager vault password |
@@ -123,7 +123,9 @@ Changing the URL, user or vault password clears the cached accounts.
   generating one has to advance a server-side counter, which is not implemented.
 - **No SHA-512.** Connect IQ offers SHA-1 and SHA-256 only. SHA-512 accounts
   appear in the list and say so when opened. SHA-1, the default, is fine.
-- **Shared accounts are not shown**, only your own.
+- **Shared accounts are not shown**, only your own. `GET /accounts` returns
+  both; entries flagged `isShared` are skipped, because a locked share is
+  encrypted with the sharing password rather than your vault key.
 - The watch clock drives the codes. Garmin keeps it synced; a watch that has
   been off-grid for a long time may drift far enough to matter.
 
@@ -133,7 +135,8 @@ Getting a code onto your wrist means the watch can compute it, so the watch
 holds everything needed to do that:
 
 - The Nextcloud app password and the vault password are stored in Connect IQ
-  application properties, in the clear.
+  application properties, in the clear. The settings fields are masked when you
+  type them, but Connect IQ has no encrypted storage to put them in.
 - The cached account list holds secrets exactly as the server sent them, still
   encrypted — but the key is derived from a password sitting next to it.
 

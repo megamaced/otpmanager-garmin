@@ -1,7 +1,6 @@
 import Toybox.Cryptography;
 import Toybox.Graphics;
 import Toybox.Lang;
-import Toybox.System;
 import Toybox.Time;
 import Toybox.Timer;
 import Toybox.WatchUi;

@@ -24,6 +24,21 @@ class Config {
             && !otpPassword.equals("");
     }
 
+    // Connect IQ refuses plain HTTP outright, so this cannot leak a credential
+    // — but it fails as an opaque error code partway through a request chain.
+    // Catching it here turns that into something the wearer can act on.
+    function isSecure() as Boolean {
+        return isHttpsUrl(serverUrl);
+    }
+
+    static function isHttpsUrl(url as String) as Boolean {
+        if (url.length() <= 8) {
+            return false;
+        }
+        var scheme = url.substring(0, 8);
+        return scheme != null && scheme.equals("https://");
+    }
+
     function apiUrl(path as String) as String {
         return serverUrl + "/ocs/v2.php/apps/otpmanager" + path;
     }

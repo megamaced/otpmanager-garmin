@@ -11,7 +11,7 @@ class AccountMenuDelegate extends WatchUi.Menu2InputDelegate {
         var id = item.getId();
         if (id instanceof Number) {
             getApp().showCode(id);
-        } else {
+        } else if (:refresh.equals(id)) {
             getApp().refreshFromMenu();
         }
     }

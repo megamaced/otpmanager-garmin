@@ -19,8 +19,14 @@ class AccountStore {
         restore();
     }
 
-    function hasAccounts() as Boolean {
-        return _loaded && _accounts.size() > 0;
+    // Loaded and empty is a real, cacheable state: a vault with no accounts in
+    // it. Conflating it with "no cache" would re-fetch on every launch.
+    function isLoaded() as Boolean {
+        return _loaded;
+    }
+
+    function isEmpty() as Boolean {
+        return _accounts.size() == 0;
     }
 
     function getAccounts() as Array<Dictionary> {

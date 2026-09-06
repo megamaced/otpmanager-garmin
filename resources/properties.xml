@@ -8,16 +8,16 @@
 
     <settings>
         <setting propertyKey="@Properties.serverUrl" title="@Strings.SettingServerUrl" prompt="https://cloud.example.com">
-            <settingConfig type="alphaNumeric" maxLength="128"/>
+            <settingConfig type="url"/>
         </setting>
         <setting propertyKey="@Properties.username" title="@Strings.SettingUsername">
             <settingConfig type="alphaNumeric" maxLength="64"/>
         </setting>
         <setting propertyKey="@Properties.appPassword" title="@Strings.SettingAppPassword">
-            <settingConfig type="alphaNumeric" maxLength="128"/>
+            <settingConfig type="password" maxLength="128"/>
         </setting>
         <setting propertyKey="@Properties.otpPassword" title="@Strings.SettingOtpPassword">
-            <settingConfig type="alphaNumeric" maxLength="128"/>
+            <settingConfig type="password" maxLength="128"/>
         </setting>
     </settings>
 </resources>

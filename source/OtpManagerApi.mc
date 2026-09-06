@@ -1,5 +1,6 @@
 import Toybox.Communications;
 import Toybox.Lang;
+import Toybox.WatchUi;
 
 // Talks to the Nextcloud OTP Manager OCS API. A refresh is three chained
 // requests: does the vault have a password, what is its IV, and the accounts.
@@ -15,15 +16,20 @@ class OtpManagerApi {
     }
 
     private var _config as Config;
-    private var _callback as (Method(result as Result, payload as Dictionary?, message as String?) as Void)?;
+    private var _generation as Number;
+    private var _callback as (Method(generation as Number, result as Result, payload as Dictionary?, message as String?) as Void)?;
     private var _hasPassword as Boolean = false;
     private var _iv as String = "";
 
-    function initialize(config as Config) {
+    // The generation is echoed back to the caller. A request chain started
+    // before the settings changed outlives the configuration it belongs to,
+    // and its result has to be discarded rather than written to the new store.
+    function initialize(config as Config, generation as Number) {
         _config = config;
+        _generation = generation;
     }
 
-    function refresh(callback as Method(result as Result, payload as Dictionary?, message as String?) as Void) as Void {
+    function refresh(callback as Method(generation as Number, result as Result, payload as Dictionary?, message as String?) as Void) as Void {
         _callback = callback;
 
         if (!_config.isComplete()) {
@@ -112,7 +118,7 @@ class OtpManagerApi {
     }
 
     // Keeps only the fields the watch needs, so the cache stays small.
-    private function toAccounts(raw as Array) as Array<Dictionary> {
+    function toAccounts(raw as Array) as Array<Dictionary> {
         var accounts = [] as Array<Dictionary>;
 
         for (var i = 0; i < raw.size(); i++) {
@@ -121,6 +127,13 @@ class OtpManagerApi {
                 continue;
             }
             if (item["deletedAt"] != null) {
+                continue;
+            }
+            // GET /accounts returns accounts shared *with* this user as well as
+            // their own. A locked share is encrypted with the sharing password
+            // rather than the vault key, so decrypting it here would only
+            // produce a misleading failure.
+            if (asBoolean(item, "isShared", false)) {
                 continue;
             }
 
@@ -178,7 +191,7 @@ class OtpManagerApi {
 
     private function report(result as Result, payload as Dictionary?, message as String?) as Void {
         if (_callback != null) {
-            _callback.invoke(result, payload, message);
+            _callback.invoke(_generation, result, payload, message);
         }
     }
 
@@ -201,7 +214,10 @@ class OtpManagerApi {
     private function describe(responseCode as Number) as String {
         if (responseCode == Communications.BLE_CONNECTION_UNAVAILABLE
             || responseCode == Communications.BLE_HOST_TIMEOUT) {
-            return "No phone connection";
+            return WatchUi.loadResource(Rez.Strings.NoPhone) as String;
+        }
+        if (responseCode == Communications.SECURE_CONNECTION_REQUIRED) {
+            return WatchUi.loadResource(Rez.Strings.InsecureUrl) as String;
         }
         return "Error " + responseCode.toString();
     }
@@ -216,5 +232,10 @@ class OtpManagerApi {
     private function asNumber(source as Dictionary, key as String, fallback as Number) as Number {
         var value = source[key];
         return value instanceof Number ? value : fallback;
+    }
+
+    private function asBoolean(source as Dictionary, key as String, fallback as Boolean) as Boolean {
+        var value = source[key];
+        return value instanceof Boolean ? value : fallback;
     }
 }

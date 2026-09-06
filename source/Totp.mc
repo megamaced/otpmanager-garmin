@@ -1,6 +1,5 @@
 import Toybox.Cryptography;
 import Toybox.Lang;
-import Toybox.Math;
 
 module Totp {
 
