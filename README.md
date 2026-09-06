@@ -133,15 +133,23 @@ Unplug the watch. The app appears in the **watch's** activity/app list as
 **OTP Manager** — not in the Connect IQ mobile app, which only ever lists
 store-installed apps.
 
-> A file named after your `.prg` appearing in `GARMIN/Apps/SETTINGS` is the sign
-> the watch accepted the app.
+> **The `.prg` disappears from `GARMIN/Apps` once installed, and that is the
+> success signal.** The watch ingests it into internal storage on eject and
+> deletes the file. What it leaves behind is a `.SET` of the same name in
+> `GARMIN/Apps/SETTINGS`, holding the app's settings. An empty `GARMIN/Apps`
+> next time you plug in means the install worked, not that it vanished.
 
 ### Changing the configuration later
 
 Edit `local.properties`, run `./build.sh local` again, and copy the new `.prg`
-over the old one. Also delete the matching `.SET` file from
-`GARMIN/Apps/SETTINGS` — it holds the values from the previous install and will
-otherwise override the new defaults. The watch recreates it.
+across as in step 5 — there is no old one to overwrite, since the watch consumed
+it at install time.
+
+Also delete the matching `.SET` file from `GARMIN/Apps/SETTINGS`. It holds the
+values captured at the previous install and overrides the new compiled-in
+defaults, so without this the app appears to ignore its new configuration. The
+watch recreates it on the next eject. This is only needed when the values
+change; reinstalling the same configuration can leave it alone.
 
 > Sideloading involves no Garmin account — that is only needed to download the
 > SDK in the first place.
