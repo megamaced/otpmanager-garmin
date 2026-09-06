@@ -28,7 +28,71 @@ The account list is cached on the watch, so the app opens instantly and keeps
 working with no phone nearby. Only the **Refresh** entry at the bottom of the
 list goes back to the server — launching the app does not.
 
+## Installing
+
+There is no Connect IQ store build — the app is sideloaded, which means
+building it yourself and copying it to the watch.
+
+### 1. Install the Connect IQ SDK
+
+Get it through Garmin's [SDK Manager](https://developer.garmin.com/connect-iq/sdk/),
+which needs a free Garmin account. Install the SDK and the device profile for
+your watch (`venu3s`, `venu3` or `vivoactive5`).
+
+> On a current Linux distro the SDK Manager will not start: it needs
+> `webkit2gtk-4.0` and `libsoup2.4`, which have aged out of every shipping
+> release. Running it in an Ubuntu 22.04 container works.
+
+### 2. Generate a developer key
+
+Every `.prg` has to be signed, even for sideloading. Any RSA key will do — it
+just has to stay the same across rebuilds:
+
+```bash
+mkdir -p ~/.Garmin/keys && cd ~/.Garmin/keys
+openssl genrsa -out developer_key.pem 4096
+openssl pkcs8 -topk8 -inform PEM -outform DER -nocrypt \
+    -in developer_key.pem -out developer_key.der
+chmod 600 developer_key.*
+```
+
+### 3. Build
+
+`build.sh` reads the active SDK from `~/.Garmin/ConnectIQ/current-sdk.cfg` and
+the key from `~/.Garmin/keys/developer_key.der` (override with `DEVELOPER_KEY`):
+
+```bash
+./build.sh
+```
+
+That writes `build/otpmanager-venu3s.prg` and one for each other device.
+
+### 4. Copy it to the watch
+
+Plug the watch in over USB. It enumerates as **MTP**, not as a USB mass storage
+device, so there is no block device to mount — the file goes through the
+desktop's MTP mount instead. On Linux that needs `gvfs-backends` and `libmtp`:
+
+```bash
+cp build/otpmanager-venu3s.prg \
+   "$(ls -d /run/user/$UID/gvfs/mtp*/Internal\ Storage)/GARMIN/APPS/"
+```
+
+On macOS use [Android File Transfer](https://www.android.com/filetransfer/), and
+on Windows the watch appears in Explorer. In every case the destination is
+`GARMIN/APPS/` on the watch's internal storage.
+
+Unplug the watch. The app appears in the activity/app list as **OTP Manager**.
+To update it later, copy a new `.prg` over the old one; to remove it, delete the
+file.
+
+> Sideloading involves no Garmin account — that is only needed to download the
+> SDK in the first place.
+
 ## Setup
+
+Do this after the app is on the watch. It will say so on launch if the settings
+are missing.
 
 ### 1. Create a Nextcloud app password
 
@@ -82,11 +146,7 @@ than per secret, and there is no authentication tag, so a wrong password is
 detected only by an implausible PKCS#7 padding. That is upstream's design, not
 this app's, and this app is deliberately bug-compatible with it.
 
-## Building
-
-Needs the Connect IQ SDK and a developer key. `build.sh` reads the active SDK
-from `~/.Garmin/ConnectIQ/current-sdk.cfg` and the key from
-`~/.Garmin/keys/developer_key.der` (override with `DEVELOPER_KEY`):
+## Development
 
 ```bash
 ./build.sh              # one signed .prg per device, into build/
@@ -97,21 +157,10 @@ The tests cover base32 decoding, the RFC 6238 vectors for SHA-1 and SHA-256,
 and AES decryption against a ciphertext produced the way the server produces
 one. They run on the device VM, not on a host reimplementation.
 
-On a current Linux distro the SDK's simulator will not start: it needs
-`webkit2gtk-4.0` and `libsoup2.4`, which have aged out of every shipping
-release. Running it in an Ubuntu 22.04 container works — that container also
-needs `libusb-1.0-0`.
-
-### Sideloading
-
-The watch enumerates as MTP, so copy the `.prg` across rather than mounting it:
-
-```bash
-cp build/otpmanager-venu3s.prg \
-   "$(ls -d /run/user/$UID/gvfs/mtp*/Internal\ Storage)/GARMIN/APPS/"
-```
-
-The app appears after unplugging.
+The simulator has the same `webkit2gtk-4.0` problem as the SDK Manager, and in
+a container it also needs `libusb-1.0-0`. Run it with host networking:
+`monkeydo` is Java, has no counterpart inside the image, and reaches the
+simulator on `localhost:1234`.
 
 ## Licence
 
