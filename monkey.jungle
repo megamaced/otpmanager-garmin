@@ -1,0 +1,11 @@
+project.manifest = manifest.xml
+
+base.sourcePath = source
+base.resourcePath = resources
+
+# The launcher icon is the only per-device resource: 70px on the Venu 3 family,
+# 56px on the vivoactive 5. Keeping it out of the shared path avoids a duplicate
+# definition rather than relying on override precedence.
+venu3.resourcePath = $(base.resourcePath);resources-icon70
+venu3s.resourcePath = $(base.resourcePath);resources-icon70
+vivoactive5.resourcePath = $(base.resourcePath);resources-icon56

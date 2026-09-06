@@ -1,0 +1,18 @@
+<resources>
+    <string id="AppName">OTP Manager</string>
+
+    <string id="SettingServerUrl">Nextcloud URL</string>
+    <string id="SettingUsername">Nextcloud user</string>
+    <string id="SettingAppPassword">Nextcloud app password</string>
+    <string id="SettingOtpPassword">OTP Manager password</string>
+
+    <string id="Loading">Loading…</string>
+    <string id="NotConfigured">Open the app settings in Garmin Connect and fill in your server details.</string>
+    <string id="NoAccounts">No OTP accounts</string>
+    <string id="Refresh">Refresh</string>
+    <string id="UnsupportedHotp">HOTP accounts are not supported.</string>
+    <string id="UnsupportedAlgorithm">SHA512 is not supported by this watch.</string>
+    <string id="DecryptFailed">Could not decrypt. Check the OTP Manager password.</string>
+    <string id="AuthFailed">Nextcloud rejected the username or app password.</string>
+    <string id="Unreachable">Could not reach the server.</string>
+</resources>
