@@ -71,16 +71,25 @@ That writes `build/otpmanager-venu3s.prg` and one for each other device.
 
 Plug the watch in over USB. It enumerates as **MTP**, not as a USB mass storage
 device, so there is no block device to mount — the file goes through the
-desktop's MTP mount instead. On Linux that needs `gvfs-backends` and `libmtp`:
+desktop's MTP mount instead. On Linux that needs `gvfs-backends` and `libmtp`.
+
+`cp` does not work here: writing into a gvfs MTP mount through ordinary POSIX
+calls fails with `Operation not supported`. Use `gio`, which goes through the
+GVfs API:
 
 ```bash
-cp build/otpmanager-venu3s.prg \
-   "$(ls -d /run/user/$UID/gvfs/mtp*/Internal\ Storage)/GARMIN/APPS/"
+gio mount -l | grep mtp://          # find the device address
+gio copy build/otpmanager-venu3s.prg \
+    "mtp://<device>/Internal Storage/GARMIN/Apps/otpmanager-venu3s.prg"
 ```
 
+The destination is `GARMIN/Apps/` on the watch's internal storage. Check the
+capitalisation against the device rather than assuming — it is `Apps` on a
+Venu 3S, though `APPS` is what most Connect IQ documentation says, and the
+directory is not created for you if you get it wrong.
+
 On macOS use [Android File Transfer](https://www.android.com/filetransfer/), and
-on Windows the watch appears in Explorer. In every case the destination is
-`GARMIN/APPS/` on the watch's internal storage.
+on Windows the watch appears in Explorer; drag the `.prg` into the same folder.
 
 Unplug the watch. The app appears in the activity/app list as **OTP Manager**.
 To update it later, copy a new `.prg` over the old one; to remove it, delete the
