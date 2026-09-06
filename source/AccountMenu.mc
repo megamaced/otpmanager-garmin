@@ -13,7 +13,7 @@ import Toybox.WatchUi;
 class AccountMenu extends WatchUi.CustomMenu {
 
     static const BACKGROUND = Graphics.COLOR_BLACK;
-    static const FRAME_MS = 100;
+    static const FRAME_MS = 180;
 
     static var tick as Number = 0;
 
@@ -58,7 +58,6 @@ class AccountMenu extends WatchUi.CustomMenu {
 class AccountMenuItem extends WatchUi.CustomMenuItem {
 
     private const HOLD_FRAMES = 12;
-    private const PIXELS_PER_FRAME = 2;
 
     private var _primary as String;
     private var _secondary as String?;
@@ -104,36 +103,64 @@ class AccountMenuItem extends WatchUi.CustomMenuItem {
         drawDivider(dc);
     }
 
-    // Centred if it fits, and scrolled within a clip if it does not.
+    // Centred if it fits, otherwise a window onto the text that advances a
+    // character at a time.
+    //
+    // Deliberately no setClip/clearClip. Clipping is the obvious way to scroll
+    // pixel-smoothly, but the clip is state on a device context shared with
+    // whatever is drawn next, and on hardware it outlived the menu and cropped
+    // the following view to one item's height. Drawing a substring touches no
+    // graphics state at all, so it cannot leak.
     private function label(dc as Graphics.Dc, text as String, font as Graphics.FontType, centreX as Number, y as Number, maxWidth as Number) as Void {
-        var width = dc.getTextWidthInPixels(text, font);
-        if (width <= maxWidth) {
+        if (dc.getTextWidthInPixels(text, font) <= maxWidth) {
             dc.drawText(centreX, y, font, text, Graphics.TEXT_JUSTIFY_CENTER);
             return;
         }
 
         AccountMenu.scrolling = true;
-
-        var left = centreX - maxWidth / 2;
-        var height = dc.getFontHeight(font);
-        dc.setClip(left, y, maxWidth, height);
-        dc.drawText(left - offset(width - maxWidth), y, font, text, Graphics.TEXT_JUSTIFY_LEFT);
-        dc.clearClip();
+        var last = lastStart(dc, text, font, maxWidth);
+        dc.drawText(centreX, y, font, fitFrom(dc, text, font, maxWidth, step(last)),
+            Graphics.TEXT_JUSTIFY_CENTER);
     }
 
-    // Rest at the start, scroll to the end, rest again, then snap back. Easier
-    // to read than a continuous loop, which never shows a settled beginning.
-    private function offset(travel as Number) as Number {
-        var steps = travel / PIXELS_PER_FRAME;
-        var frame = AccountMenu.tick % (HOLD_FRAMES + steps + HOLD_FRAMES);
+    // Rest at the start, advance to the end, rest again, then back. Easier to
+    // read than a continuous loop, which never shows a settled beginning.
+    private function step(last as Number) as Number {
+        var frame = AccountMenu.tick % (HOLD_FRAMES + last + HOLD_FRAMES);
 
         if (frame < HOLD_FRAMES) {
             return 0;
         }
-        if (frame < HOLD_FRAMES + steps) {
-            return (frame - HOLD_FRAMES) * PIXELS_PER_FRAME;
+        if (frame < HOLD_FRAMES + last) {
+            return frame - HOLD_FRAMES;
         }
-        return travel;
+        return last;
+    }
+
+    // The first offset from which the rest of the string fits — scrolling past
+    // it would only pull the text away from the right-hand edge.
+    private function lastStart(dc as Graphics.Dc, text as String, font as Graphics.FontType, maxWidth as Number) as Number {
+        var length = text.length();
+        for (var start = 0; start < length; start++) {
+            var tail = text.substring(start, length);
+            if (tail != null && dc.getTextWidthInPixels(tail, font) <= maxWidth) {
+                return start;
+            }
+        }
+        return 0;
+    }
+
+    private function fitFrom(dc as Graphics.Dc, text as String, font as Graphics.FontType, maxWidth as Number, start as Number) as String {
+        var length = text.length();
+        var shown = "";
+        for (var end = start + 1; end <= length; end++) {
+            var candidate = text.substring(start, end);
+            if (candidate == null || dc.getTextWidthInPixels(candidate, font) > maxWidth) {
+                break;
+            }
+            shown = candidate;
+        }
+        return shown;
     }
 
     // Rows are two lines tall, so they need a rule between them to read as
