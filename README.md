@@ -30,8 +30,14 @@ list goes back to the server — launching the app does not.
 
 ## Installing
 
-There is no Connect IQ store build — the app is sideloaded, which means
-building it yourself and copying it to the watch.
+There is no Connect IQ store build, so the app is sideloaded: you build it and
+copy it to the watch.
+
+Configuration is part of the build rather than a later step, because **Garmin
+supports no settings UI for sideloaded apps** — a sideloaded app does not appear
+in the Connect IQ mobile app at all, and Garmin Express does not offer its
+settings either. There is nowhere to type the server details afterwards, so they
+go in beforehand.
 
 ### 1. Install the Connect IQ SDK
 
@@ -56,18 +62,50 @@ openssl pkcs8 -topk8 -inform PEM -outform DER -nocrypt \
 chmod 600 developer_key.*
 ```
 
-### 3. Build
-
-`build.sh` reads the active SDK from `~/.Garmin/ConnectIQ/current-sdk.cfg` and
-the key from `~/.Garmin/keys/developer_key.der` (override with `DEVELOPER_KEY`):
+### 3. Enter your server details
 
 ```bash
-./build.sh
+cp local.properties.example local.properties
+$EDITOR local.properties          # gitignored; never commit it
 ```
 
-That writes `build/otpmanager-venu3s.prg` and one for each other device.
+| Setting | What it is |
+|---|---|
+| `serverUrl` | e.g. `https://cloud.example.com` — must be `https://` |
+| `username` | your Nextcloud **user ID** (see below) |
+| `appPassword` | Nextcloud → **Settings → Security → Devices & sessions** |
+| `otpPassword` | your OTP Manager vault password |
 
-### 4. Copy it to the watch
+Use a Nextcloud **app password**, not your login password — it can be revoked on
+its own and it sidesteps two-factor prompts.
+
+`username` is the Nextcloud user ID, which is not always the short name you type
+at a login form. Servers that provision users through OIDC or SSO commonly set
+it to the email address instead. The app-password screen shows the login name to
+use, and `GET /ocs/v2.php/cloud/user` returns it as `id` if you want to be sure.
+
+Leave `otpPassword` as any non-empty value if your vault has no encryption
+password; it is ignored then.
+
+### 4. Build
+
+```bash
+./build.sh local
+```
+
+`build.sh` reads the active SDK from `~/.Garmin/ConnectIQ/current-sdk.cfg` and
+the key from `~/.Garmin/keys/developer_key.der` (override with `DEVELOPER_KEY`).
+It writes `build/otpmanager-venu3s.prg` with your values compiled in as the
+property defaults, then restores `resources/properties.xml` — including if the
+build fails — so credentials are never left in the working tree.
+
+> The resulting `.prg` contains both passwords in the clear. Treat that file the
+> way you would treat the credentials themselves.
+
+Plain `./build.sh` builds every supported device with empty defaults. That is
+the right thing for a store submission and useless on a sideloaded watch.
+
+### 5. Copy it to the watch
 
 Plug the watch in over USB. It enumerates as **MTP**, not as a USB mass storage
 device, so there is no block device to mount — the file goes through the
@@ -91,59 +129,26 @@ directory is not created for you if you get it wrong.
 On macOS use [Android File Transfer](https://www.android.com/filetransfer/), and
 on Windows the watch appears in Explorer; drag the `.prg` into the same folder.
 
-Unplug the watch. The app appears in the activity/app list as **OTP Manager**.
-To update it later, copy a new `.prg` over the old one; to remove it, delete the
-file.
+Unplug the watch. The app appears in the **watch's** activity/app list as
+**OTP Manager** — not in the Connect IQ mobile app, which only ever lists
+store-installed apps.
+
+> A file named after your `.prg` appearing in `GARMIN/Apps/SETTINGS` is the sign
+> the watch accepted the app.
+
+### Changing the configuration later
+
+Edit `local.properties`, run `./build.sh local` again, and copy the new `.prg`
+over the old one. Also delete the matching `.SET` file from
+`GARMIN/Apps/SETTINGS` — it holds the values from the previous install and will
+otherwise override the new defaults. The watch recreates it.
 
 > Sideloading involves no Garmin account — that is only needed to download the
 > SDK in the first place.
 
-## Setup
-
-**Garmin supports no settings UI for sideloaded apps.** A sideloaded app does
-not appear in the Connect IQ mobile app at all — "My Device Apps" lists only
-store-installed apps — and Garmin Express does not offer its settings either.
-So there is nowhere to type the server details for a build installed the way
-described above.
-
-The way round it is to bake the configuration into the build.
-
-```bash
-cp local.properties.example local.properties
-$EDITOR local.properties          # gitignored; never commit it
-./build.sh local
-```
-
-That writes `build/otpmanager-venu3s.prg` with your values as the property
-defaults. Sideload it exactly as above. `resources/properties.xml` is restored
-afterwards — including if the build fails — so credentials cannot be left in the
-working tree.
-
-| Setting | Example |
-|---|---|
-| `serverUrl` | `https://cloud.example.com` (must be `https://`) |
-| `username` | your Nextcloud **user ID** — see below |
-| `appPassword` | Nextcloud → **Settings → Security → Devices & sessions** |
-| `otpPassword` | your OTP Manager vault password |
-
-Use a Nextcloud **app password**, not your login password — it can be revoked on
-its own and it sidesteps two-factor prompts.
-
-`username` is the Nextcloud user ID, which is not always the short name you type
-at a login form. Servers that provision users through OIDC or SSO commonly set
-it to the email address instead. The app-password screen shows the login name to
-use, and `GET /ocs/v2.php/cloud/user` returns it as `id` if you want to be sure. Leave `otpPassword` as any
-non-empty value if your vault has no encryption password; it is ignored then.
-
-To change any of it, edit `local.properties`, rebuild and copy the new `.prg`
-over the old one.
-
-> The resulting `.prg` contains both passwords in the clear, so treat that file
-> the way you would treat the credentials themselves.
-
 > If the app is ever published to the Connect IQ Store, none of this applies:
-> store-installed apps get the normal settings screen in Garmin Connect, and the
-> committed `properties.xml` deliberately ships with empty defaults for that.
+> store-installed apps get the normal settings screen in Garmin Connect, which is
+> why the committed `properties.xml` ships with empty defaults.
 
 ## Limitations
 
