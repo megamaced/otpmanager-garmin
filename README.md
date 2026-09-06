@@ -156,6 +156,13 @@ otherwise override the new defaults. The watch recreates it.
   generating one has to advance a server-side counter, which is not implemented.
 - **No SHA-512.** Connect IQ offers SHA-1 and SHA-256 only. SHA-512 accounts
   appear in the list and say so when opened. SHA-1, the default, is fine.
+- Accounts are listed **grouped by issuer**, then by name, case-insensitively.
+  One with no issuer sorts under its own name. The server's own order is not
+  useful on a watch, and there is no way to re-sort from the device.
+- A provider or account name too long for the screen **scrolls** rather than
+  being cut off. Garmin's touch devices never mark a list row as focused, so
+  there is no "selected" row to scroll on demand — every over-long label
+  scrolls, and the animation stops entirely when nothing on screen needs it.
 - **Shared accounts are not shown**, only your own. `GET /accounts` returns
   both; entries flagged `isShared` are skipped, because a locked share is
   encrypted with the sharing password rather than your vault key.

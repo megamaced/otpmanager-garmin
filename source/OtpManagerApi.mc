@@ -148,7 +148,42 @@ class OtpManagerApi {
             });
         }
 
+        return sorted(accounts);
+    }
+
+    // The server returns its own accounts then any shared ones, in neither case
+    // in an order that helps on a watch. Sorting by issuer groups every entry
+    // for one provider together, which is how you scan a list you cannot search.
+    // Lang.Array has no sort, and the list is a handful of entries.
+    private function sorted(accounts as Array<Dictionary>) as Array<Dictionary> {
+        for (var i = 1; i < accounts.size(); i++) {
+            var moving = accounts[i];
+            var j = i - 1;
+            while (j >= 0 && precedes(moving, accounts[j])) {
+                accounts[j + 1] = accounts[j];
+                j--;
+            }
+            accounts[j + 1] = moving;
+        }
         return accounts;
+    }
+
+    private function precedes(a as Dictionary, b as Dictionary) as Boolean {
+        var byIssuer = sortKey(a, "issuer").compareTo(sortKey(b, "issuer"));
+        if (byIssuer != 0) {
+            return byIssuer < 0;
+        }
+        return sortKey(a, "name").compareTo(sortKey(b, "name")) < 0;
+    }
+
+    // Case-insensitive, and an account with no issuer sorts under its own name
+    // rather than to the top of the list.
+    private function sortKey(account as Dictionary, key as String) as String {
+        var issuer = account["issuer"] as String;
+        var value = key.equals("issuer") && issuer.equals("")
+            ? account["name"] as String
+            : account[key] as String;
+        return value.toLower();
     }
 
     // Unwraps the OCS envelope. Returns null after reporting the failure, so

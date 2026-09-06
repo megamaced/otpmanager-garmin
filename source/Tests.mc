@@ -151,6 +151,33 @@ function testSharedAndDeletedAccountsAreSkipped(logger as Logger) as Boolean {
     return true;
 }
 
+(:test)
+function testAccountsAreGroupedByIssuer(logger as Logger) as Boolean {
+    var api = new OtpManagerApi(new Config(), 0);
+    var parsed = api.toAccounts([
+        issued("zoe", "Zulu"),
+        issued("beta", "Authentik"),
+        issued("adam", "aardvark"),
+        issued("alpha", "authentik"),
+        issued("solo", "")
+    ]);
+
+    // Case-insensitive by issuer, then by name; an account with no issuer
+    // sorts under its own name rather than jumping to the front.
+    var order = "";
+    for (var i = 0; i < parsed.size(); i++) {
+        order += (parsed[i]["name"] as String) + " ";
+    }
+    Test.assertEqual(order, "adam alpha beta solo zoe ");
+    return true;
+}
+
+function issued(name as String, issuer as String) as Dictionary {
+    var a = account(name, false, null);
+    a["issuer"] = issuer;
+    return a;
+}
+
 function account(name as String, shared as Boolean, deletedAt as String?) as Dictionary {
     return {
         "name" => name,
