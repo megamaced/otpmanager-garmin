@@ -122,12 +122,17 @@ working tree.
 | Setting | Example |
 |---|---|
 | `serverUrl` | `https://cloud.example.com` (must be `https://`) |
-| `username` | your Nextcloud username |
+| `username` | your Nextcloud **user ID** — see below |
 | `appPassword` | Nextcloud → **Settings → Security → Devices & sessions** |
 | `otpPassword` | your OTP Manager vault password |
 
 Use a Nextcloud **app password**, not your login password — it can be revoked on
-its own and it sidesteps two-factor prompts. Leave `otpPassword` as any
+its own and it sidesteps two-factor prompts.
+
+`username` is the Nextcloud user ID, which is not always the short name you type
+at a login form. Servers that provision users through OIDC or SSO commonly set
+it to the email address instead. The app-password screen shows the login name to
+use, and `GET /ocs/v2.php/cloud/user` returns it as `id` if you want to be sure. Leave `otpPassword` as any
 non-empty value if your vault has no encryption password; it is ignored then.
 
 To change any of it, edit `local.properties`, rebuild and copy the new `.prg`

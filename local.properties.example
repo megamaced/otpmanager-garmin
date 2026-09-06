@@ -6,6 +6,10 @@
 #
 # The resulting .prg contains your credentials in the clear. Keep it local.
 serverUrl=https://cloud.example.com
+
+# The Nextcloud *user ID*, which is not always a short name. On a server that
+# provisions users through OIDC it is often the email address. Whatever the
+# app-password screen shows as the login name is the right value.
 username=alice
 appPassword=xxxx-xxxx-xxxx-xxxx-xxxx
 otpPassword=your-otp-manager-vault-password
