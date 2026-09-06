@@ -31,12 +31,26 @@ class Config {
         return isHttpsUrl(serverUrl);
     }
 
+    // Absolute, HTTPS, and with an authority. URI schemes are case-insensitive,
+    // and "https://" on its own is a prefix rather than a host.
     static function isHttpsUrl(url as String) as Boolean {
         if (url.length() <= 8) {
             return false;
         }
+
         var scheme = url.substring(0, 8);
-        return scheme != null && scheme.equals("https://");
+        if (scheme == null || !scheme.toLower().equals("https://")) {
+            return false;
+        }
+
+        // The authority runs to the first "/", "?" or "#", so if one of those
+        // opens it there is no host at all.
+        var rest = url.substring(8, url.length());
+        if (rest == null) {
+            return false;
+        }
+        var first = rest.toCharArray()[0];
+        return first != '/' && first != '?' && first != '#';
     }
 
     function apiUrl(path as String) as String {

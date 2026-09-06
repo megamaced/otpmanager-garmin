@@ -120,6 +120,18 @@ function testOnlyHttpsUrlsAreAccepted(logger as Logger) as Boolean {
     Test.assertMessage(!Config.isHttpsUrl("cloud.example.com"), "a bare host must be rejected");
     Test.assertMessage(!Config.isHttpsUrl(""), "an empty URL must be rejected");
     Test.assertMessage(!Config.isHttpsUrl("https://"), "a scheme with no host must be rejected");
+
+    // URI schemes are case-insensitive.
+    Test.assertMessage(Config.isHttpsUrl("HTTPS://cloud.example.com"), "an upper-case scheme is still https");
+    Test.assertMessage(Config.isHttpsUrl("HtTpS://cloud.example.com"), "scheme case must not matter");
+    Test.assertMessage(!Config.isHttpsUrl("HTTP://cloud.example.com"), "upper-case http is still not https");
+
+    // Long enough to pass a naive prefix check, but with no authority.
+    Test.assertMessage(!Config.isHttpsUrl("https:///"), "an empty authority must be rejected");
+    Test.assertMessage(!Config.isHttpsUrl("https:///path"), "a path with no host must be rejected");
+    Test.assertMessage(!Config.isHttpsUrl("https://?q=1"), "a query with no host must be rejected");
+    Test.assertMessage(!Config.isHttpsUrl("https://#f"), "a fragment with no host must be rejected");
+    Test.assertMessage(Config.isHttpsUrl("https://h"), "a one-character host is an authority");
     return true;
 }
 
