@@ -39,6 +39,11 @@ in the Connect IQ mobile app at all, and Garmin Express does not offer its
 settings either. There is nowhere to type the server details afterwards, so they
 go in beforehand.
 
+> If you would rather type the settings on your phone than rebuild for every
+> change, upload it to your own account as a **beta app** instead — see
+> [Or upload it as a beta](#or-upload-it-as-a-beta-instead) below. Steps 1 and 2
+> here are needed either way.
+
 ### 1. Install the Connect IQ SDK
 
 Get it through Garmin's [SDK Manager](https://developer.garmin.com/connect-iq/sdk/),
@@ -158,6 +163,30 @@ change; reinstalling the same configuration can leave it alone.
 > store-installed apps get the normal settings screen in Garmin Connect, which is
 > why the committed `properties.xml` ships with empty defaults.
 
+### Or upload it as a beta instead
+
+The Connect IQ Store has a **Beta App** slot whose whole purpose is this: it
+lets you "test app settings and Garmin Connect integration in production without
+releasing the app". A beta upload installs through the normal store path, so it
+appears in **My Device Apps** and gets the real settings screen in Garmin
+Connect and Garmin Express — no baking, no rebuild to change a value, and no
+review.
+
+```bash
+./build.sh beta        # a .iq under the beta app id in build.sh
+```
+
+Upload `build/otpmanager-beta.iq` at
+[developer.garmin.com](https://developer.garmin.com/connect-iq/submit-an-app/)
+with the **Beta App** box ticked, then install it from the store as usual. The
+beta uses a different app id from the production build so the store treats it as
+a separate listing; the same developer key signs both, and you can re-upload it
+as often as you like. `./build.sh export` produces the production `.iq` when
+there is something to release.
+
+Only your own Garmin account can see or install it — there is no way to invite
+other testers from the developer dashboard.
+
 ## Limitations
 
 - **TOTP only.** HOTP accounts appear in the list but say so when opened —
@@ -201,7 +230,10 @@ this app's, and this app is deliberately bug-compatible with it.
 
 ```bash
 ./build.sh              # one signed .prg per device, into build/
+./build.sh local        # one .prg with local.properties compiled in
 ./build.sh test         # unit tests, in the simulator
+./build.sh export       # a .iq for the store
+./build.sh beta         # a .iq for the store's Beta App slot
 ```
 
 The tests cover base32 decoding, the RFC 6238 vectors for SHA-1 and SHA-256,
