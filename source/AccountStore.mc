@@ -16,7 +16,12 @@ class AccountStore {
 
     function initialize(config as Config) {
         _config = config;
-        restore();
+
+        // While the credentials are still sealed the fingerprint cannot match,
+        // and restoring would throw away a cache that is about to be valid.
+        if (config.isComplete()) {
+            restore();
+        }
     }
 
     // Loaded and empty is a real, cacheable state: a vault with no accounts in

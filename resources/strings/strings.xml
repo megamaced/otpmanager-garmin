@@ -5,6 +5,12 @@
     <string id="SettingUsername">Nextcloud user</string>
     <string id="SettingAppPassword">Nextcloud app password</string>
     <string id="SettingOtpPassword">OTP Manager password</string>
+    <string id="SettingPin">Watch PIN</string>
+    <string id="SettingPinPrompt">4 to 8 digits. The watch asks for this once a day, and again whenever it has been off your wrist — the rule Garmin Pay uses. Setting it encrypts both passwords on the watch and clears them from this screen.</string>
+
+    <string id="WrongPin">Wrong PIN</string>
+    <string id="Checking">Checking…</string>
+    <string id="BadPin">The PIN must be 4 to 8 digits, and both passwords must be filled in with it.</string>
 
     <string id="Loading">Loading…</string>
     <string id="NotConfigured">Open the app settings in Garmin Connect and fill in your server details.</string>

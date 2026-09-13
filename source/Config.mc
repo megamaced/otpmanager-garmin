@@ -2,7 +2,8 @@ import Toybox.Application;
 import Toybox.Lang;
 import Toybox.StringUtil;
 
-// The four values the user fills in from Garmin Connect / Garmin Express.
+// The values the user fills in from Garmin Connect / Garmin Express. The two
+// passwords are empty until the PIN opens them, on a build that has one.
 class Config {
 
     var serverUrl as String;
@@ -15,6 +16,64 @@ class Config {
         username = read("username");
         appPassword = read("appPassword");
         otpPassword = read("otpPassword");
+
+        // A sealed build must never fall back on plaintext left behind by an
+        // install that predates the PIN: a stale .SET would quietly unlock it.
+        if (!read("sealed").equals("") && read("pin").equals("")) {
+            appPassword = "";
+            otpPassword = "";
+        }
+    }
+
+    // Null on a build with no PIN, where the credentials are in the properties
+    // in the clear — which is how this app worked before the PIN existed, and
+    // still the default for a build that does not ask for one.
+    function sealedBlob() as SealedBlob? {
+        var encoded = read("sealed");
+        if (encoded.equals("")) {
+            return null;
+        }
+        return Sealed.parse(encoded);
+    }
+
+    function unlock(credentials as Credentials) as Void {
+        appPassword = credentials.appPassword;
+        otpPassword = credentials.otpPassword;
+    }
+
+    // A PIN typed into Garmin Connect and not yet acted on. Garmin Connect is
+    // the only place a store or beta build can be given one, and it keeps
+    // whatever it is given in the clear, so this is a state to get out of
+    // rather than one to stay in. Empty on a sideload, which seals at build
+    // time and never has a plaintext stage at all.
+    function pendingPin() as String {
+        return read("pin");
+    }
+
+    function canSeal() as Boolean {
+        return Sealed.isPin(pendingPin())
+            && !appPassword.equals("")
+            && !otpPassword.equals("");
+    }
+
+    // Stores the seal and clears every plaintext it replaces, including the PIN
+    // itself. Deliberately not done at launch: the wearer retypes the PIN on
+    // the watch first, so a typo in Garmin Connect cannot take the only copy of
+    // the credentials with it.
+    function completeSeal(blob as String) as Void {
+        Application.Properties.setValue("sealed", blob);
+        Application.Properties.setValue("pin", "");
+        Application.Properties.setValue("appPassword", "");
+        Application.Properties.setValue("otpPassword", "");
+
+        // Any earlier unlock belongs to credentials that are no longer current.
+        PinLock.forget();
+    }
+
+    // Enough to know which server to talk to, whether or not the credentials
+    // for it have been unsealed yet.
+    function hasServer() as Boolean {
+        return !serverUrl.equals("") && !username.equals("");
     }
 
     function isComplete() as Boolean {

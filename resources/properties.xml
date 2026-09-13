@@ -4,6 +4,12 @@
         <property id="username" type="string"></property>
         <property id="appPassword" type="string"></property>
         <property id="otpPassword" type="string"></property>
+        <property id="pin" type="string"></property>
+
+        <!-- Both passwords, encrypted under the PIN. Written by the app once
+             the PIN has been set, or compiled in by tools/bake-properties.py.
+             No settings entry: there is nothing here anyone can usefully type. -->
+        <property id="sealed" type="string"></property>
     </properties>
 
     <settings>
@@ -18,6 +24,9 @@
         </setting>
         <setting propertyKey="@Properties.otpPassword" title="@Strings.SettingOtpPassword">
             <settingConfig type="password" maxLength="128"/>
+        </setting>
+        <setting propertyKey="@Properties.pin" title="@Strings.SettingPin" prompt="@Strings.SettingPinPrompt">
+            <settingConfig type="password" maxLength="8"/>
         </setting>
     </settings>
 </resources>

@@ -80,6 +80,7 @@ $EDITOR local.properties          # gitignored; never commit it
 | `username` | your Nextcloud **user ID** (see below) |
 | `appPassword` | Nextcloud → **Settings → Security → Devices & sessions** |
 | `otpPassword` | your OTP Manager vault password |
+| `pin` | optional, 4–8 digits — see [Locking the app](#locking-the-app-with-a-pin) |
 
 Use a Nextcloud **app password**, not your login password — it can be revoked on
 its own and it sidesteps two-factor prompts.
@@ -104,8 +105,10 @@ It writes `build/otpmanager-venu3s.prg` with your values compiled in as the
 property defaults, then restores `resources/properties.xml` — including if the
 build fails — so credentials are never left in the working tree.
 
-> The resulting `.prg` contains both passwords in the clear. Treat that file the
-> way you would treat the credentials themselves.
+> Without a `pin`, the resulting `.prg` contains both passwords in the clear.
+> Treat that file the way you would treat the credentials themselves. With a
+> `pin` set it carries ciphertext instead, and the plaintext never reaches the
+> build at all.
 
 Plain `./build.sh` builds every supported device with empty defaults. That is
 the right thing for a store submission and useless on a sideloaded watch.
@@ -187,6 +190,67 @@ there is something to release.
 Only your own Garmin account can see or install it — there is no way to invite
 other testers from the developer dashboard.
 
+## Locking the app with a PIN
+
+Set a 4 to 8 digit PIN and the app follows the same rule Garmin Pay uses for its
+wallet passcode: **entering it once keeps the app open for 24 hours, and only
+while the watch stays on your wrist.** Take the watch off and the PIN is needed
+again.
+
+Garmin exposes no hook into Garmin Pay itself — there is no wallet API, no NFC
+access, and no way to raise the system passcode prompt. What it does expose is
+the signal Garmin Pay's own rule turns on. The manual says the passcode comes
+back if you "remove the watch from your wrist **or disable heart rate
+monitoring**", and the heart rate history is readable by any app, with no
+permission and no manifest change.
+
+The app walks that history backwards from now to the moment you unlocked, and
+asks one question: did a usable reading turn up at least every ten minutes the
+whole way back? If not — a gap, a long outage, or history that does not reach
+that far — it locks. Heart rate history does not survive a power cycle either,
+so rebooting the watch always locks it.
+
+A single invalid reading does **not** count as the watch coming off. The optical
+sensor drops readings constantly on a wrist that never moved — on a Venu 3S,
+about seven of every sixty samples — so treating one as evidence of removal
+locks the app at random. Removal looks like a *run* of them, long enough that no
+usable reading turns up for ten minutes.
+
+Setting a PIN also encrypts both passwords rather than just hiding the screen
+behind them. They are sealed into one AES-256-CBC blob keyed on the PIN, and
+nothing else on the watch holds them.
+
+On a sideload `tools/seal.py` does this at build time, so the `.prg` never
+contains plaintext. On a store or beta build there is a moment where it does —
+Garmin Connect has nowhere else to put what you type — so the app gets out of
+that state on its next launch: it shows the keypad, you retype the PIN you just
+set, and only once those match does it write the seal and blank all three fields
+in Garmin Connect. Typing it on the watch is the point. A typo in Garmin Connect
+would otherwise take the only copy of your credentials with it.
+
+**Be clear about what that buys.** Against someone who picks up your watch, it
+is the real thing: they get a keypad and nothing else. Against someone who gets
+hold of the `.prg` or the watch's storage, it raises the cost of a guess and no
+more. Connect IQ has no PBKDF2 and nothing memory-hard, so the key is iterated
+SHA-256 — 5000 rounds, which is about as much as a watch can do while you wait —
+and a short numeric PIN does not survive an offline attack on any real hardware.
+Keep treating the `.prg` as sensitive.
+
+While the 24 hours are running, the key derived from your PIN is held in the
+app's storage so the grace period can work at all. It is erased the moment the
+unlock ends.
+
+| | |
+|---|---|
+| Grace period | `PinLock.GRACE_SECONDS` |
+| Longest run without a usable reading that still counts as worn | `PinLock.MAX_SAMPLE_GAP` |
+| Rounds per guess | `Sealed.ITERATIONS`, and the same constant in `tools/seal.py` |
+
+The iteration count is written into each sealed blob, so raising it later does
+not strand a seal made under the old one. `./build.sh test` logs what a
+derivation costs; the simulator runs on your workstation's CPU, so treat that
+number as a floor and watch the ring on the actual watch.
+
 ## Limitations
 
 - **TOTP only.** HOTP accounts appear in the list but say so when opened —
@@ -209,7 +273,9 @@ other testers from the developer dashboard.
 ## Security
 
 Getting a code onto your wrist means the watch can compute it, so the watch
-holds everything needed to do that:
+holds everything needed to do that.
+
+**Without a PIN**, that is as direct as it sounds:
 
 - The Nextcloud app password and the vault password are stored in Connect IQ
   application properties, in the clear. The settings fields are masked when you
@@ -220,6 +286,14 @@ holds everything needed to do that:
 Treat the watch as you would an unlocked authenticator app. If you lose it,
 revoke the Nextcloud app password; that cuts off refreshes, though a cached
 list will still generate codes until the app is deleted.
+
+**With a PIN**, neither password is stored anywhere in the clear, and a watch
+that has been off your wrist shows a keypad rather than your codes. That defeats
+someone who picks the watch up. It does not defeat someone who gets the `.prg`
+or the watch's storage and attacks the PIN offline — see
+[Locking the app](#locking-the-app-with-a-pin) for why a watch cannot make a
+four to eight digit PIN expensive enough for that. Revoking the app password is
+still the thing to do if you lose the watch.
 
 The upstream scheme itself is worth knowing about: the IV is per user rather
 than per secret, and there is no authentication tag, so a wrong password is
@@ -237,8 +311,15 @@ this app's, and this app is deliberately bug-compatible with it.
 ```
 
 The tests cover base32 decoding, the RFC 6238 vectors for SHA-1 and SHA-256,
-and AES decryption against a ciphertext produced the way the server produces
-one. They run on the device VM, not on a host reimplementation.
+AES decryption against a ciphertext produced the way the server produces one,
+and the lock rule. They run on the device VM, not on a host reimplementation.
+
+Two of them are worth knowing about. One opens a sealed blob produced by
+`tools/seal.py`, so the watch and the build-time sealer are checked against each
+other rather than each against itself — the key derivation has to agree
+byte for byte or that test fails. The other feeds the wear rule fabricated
+heart rate samples, which is the only way to take a watch off a wrist from a
+test suite.
 
 The simulator has the same `webkit2gtk-4.0` problem as the SDK Manager, and in
 a container it also needs `libusb-1.0-0`. Run it with host networking:

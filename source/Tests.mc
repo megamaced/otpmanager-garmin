@@ -1,3 +1,5 @@
+import Toybox.System;
+import Toybox.ActivityMonitor;
 import Toybox.Cryptography;
 import Toybox.Lang;
 import Toybox.Test;
@@ -172,6 +174,188 @@ function testAccountsAreGroupedByIssuer(logger as Logger) as Boolean {
     return true;
 }
 
+// Produced by tools/seal.py with a fixed salt and IV, so that the watch and the
+// build-time sealer are checked against each other rather than each against
+// itself. A low iteration count keeps the test quick; the count lives in the
+// blob, so the derivation does not care what it is.
+//
+//   ./tools/seal.py --pin 1357 --app-password app-pw --otp-password hunter2 \
+//       --iterations 1000 --salt 000102030405060708090a0b0c0d0e0f \
+//       --iv 0f0e0d0c0b0a09080706050403020100
+const SEALED_BY_PYTHON =
+    "AQQAAAPoAAECAwQFBgcICQoLDA0ODw8ODQwLCgkIBwYFBAMCAQAwKz0ibkPuj1V2xhhoQp4WZURiEvltK3QftJILqyd47g==";
+
+(:test)
+function testOpensABlobSealedByTheBuildTools(logger as Logger) as Boolean {
+    var blob = Sealed.parse(SEALED_BY_PYTHON);
+    Test.assertMessage(blob != null, "the python blob did not parse");
+
+    var parsed = blob as SealedBlob;
+    Test.assertEqual(parsed.pinLength, 4);
+    Test.assertEqual(parsed.iterations, 1000);
+
+    var credentials = openWith(parsed, "1357");
+    Test.assertMessage(credentials != null, "the right PIN did not open the blob");
+    Test.assertEqual((credentials as Credentials).appPassword, "app-pw");
+    Test.assertEqual((credentials as Credentials).otpPassword, "hunter2");
+    return true;
+}
+
+(:test)
+function testSealedBlobRejectsTheWrongPin(logger as Logger) as Boolean {
+    var blob = Sealed.parse(SEALED_BY_PYTHON) as SealedBlob;
+
+    // Adjacent, and the same length: nothing about a wrong PIN should be
+    // easier to guess from how it fails.
+    Test.assertMessage(openWith(blob, "1358") == null, "a wrong PIN opened the blob");
+    Test.assertMessage(openWith(blob, "0000") == null, "a wrong PIN opened the blob");
+    return true;
+}
+
+// Round trip through the watch's own sealer, driven exactly as the app drives
+// it: derive a key from the PIN, then seal under it.
+(:test)
+function testSealRoundTripsOnTheWatch(logger as Logger) as Boolean {
+    var salt = Sealed.salt();
+    var key = derive("86420", salt, Sealed.ITERATIONS);
+
+    var encoded = Sealed.sealWithKey("nextcloud-app-password", "vault-password",
+        5, salt, Sealed.iv(), key);
+    Test.assertMessage(encoded != null, "sealing failed");
+
+    var blob = Sealed.parse(encoded as String);
+    Test.assertMessage(blob != null, "the watch produced a blob it cannot parse");
+
+    var parsed = blob as SealedBlob;
+    Test.assertEqual(parsed.pinLength, 5);
+    Test.assertEqual(parsed.iterations, Sealed.ITERATIONS);
+
+    var credentials = openWith(parsed, "86420");
+    Test.assertMessage(credentials != null, "the PIN just used did not open the blob");
+    Test.assertEqual((credentials as Credentials).appPassword, "nextcloud-app-password");
+    Test.assertEqual((credentials as Credentials).otpPassword, "vault-password");
+
+    Test.assertMessage(openWith(parsed, "86421") == null, "a wrong PIN opened the blob");
+    return true;
+}
+
+(:test)
+function testOnlyFourToEightDigitsAreAPin(logger as Logger) as Boolean {
+    Test.assertMessage(Sealed.isPin("1234"), "four digits is a PIN");
+    Test.assertMessage(Sealed.isPin("12345678"), "eight digits is a PIN");
+    Test.assertMessage(!Sealed.isPin("123"), "three digits is too short");
+    Test.assertMessage(!Sealed.isPin("123456789"), "nine digits is too long");
+    Test.assertMessage(!Sealed.isPin("12a4"), "a letter is not a digit");
+    Test.assertMessage(!Sealed.isPin(""), "an empty PIN is not a PIN");
+    return true;
+}
+
+(:test)
+function testMalformedBlobsAreRejected(logger as Logger) as Boolean {
+    Test.assertMessage(Sealed.parse("") == null, "an empty blob must be rejected");
+    Test.assertMessage(Sealed.parse("not base64 at all !!") == null, "junk must be rejected");
+    Test.assertMessage(Sealed.parse("AQQAAAPoAAEC") == null, "a truncated blob must be rejected");
+    return true;
+}
+
+// The Garmin Pay rule: unlocked for 24 hours, and only while worn. Samples
+// arrive newest first, so the walk runs backwards towards the unlock.
+//
+// The shape of these cases comes from what a Venu 3S actually records: one
+// sample a minute, and about seven in every sixty invalid while the watch is
+// being worn normally.
+(:test)
+function testWearIsCreditedOnlyWhenUnbroken(logger as Logger) as Boolean {
+    var now = 10000;
+    var since = now - 3600;
+
+    Test.assertMessage(PinLock.wornSince(worn(now, since - 60, 60), since, now),
+        "a sample a minute back past the unlock is continuous wear");
+    Test.assertMessage(!PinLock.wornSince([] as Array<HrSample>, since, now),
+        "no history at all cannot prove wear");
+    return true;
+}
+
+// The bug this rule was first written with: a dropped optical reading is not a
+// removed watch, and on hardware they are common enough that treating one as
+// removal locks the app on almost every launch.
+(:test)
+function testDroppedReadingsDoNotEndTheUnlock(logger as Logger) as Boolean {
+    var now = 10000;
+    var since = now - 3600;
+
+    var samples = worn(now, since - 60, 60);
+    samples[0].heartRate = ActivityMonitor.INVALID_HR_SAMPLE;
+    samples[7].heartRate = ActivityMonitor.INVALID_HR_SAMPLE;
+    samples[8].heartRate = null;
+    samples[20].heartRate = ActivityMonitor.INVALID_HR_SAMPLE;
+    Test.assertMessage(PinLock.wornSince(samples, since, now),
+        "scattered invalid samples, including the newest, are still wear");
+    return true;
+}
+
+(:test)
+function testWearEndsAtAGapOrASustainedOutage(logger as Logger) as Boolean {
+    var now = 10000;
+    var since = now - 3600;
+
+    var stale = [new HrSample(60, now - 1200)] as Array<HrSample>;
+    Test.assertMessage(!PinLock.wornSince(stale, since, now),
+        "a watch with no recent reading is not on a wrist now");
+
+    // Worn since, but with the watch off for half an hour in the middle.
+    var interrupted = worn(now, now - 900, 60);
+    interrupted.addAll(worn(now - 2700, since - 60, 60));
+    Test.assertMessage(!PinLock.wornSince(interrupted, since, now),
+        "a gap in the middle must end the unlock");
+
+    // What taking the watch off looks like: not one invalid sample but a run of
+    // them, long enough that no usable reading turns up for MAX_SAMPLE_GAP.
+    var removed = worn(now, since - 60, 60);
+    for (var i = 3; i < 16; i++) {
+        removed[i].heartRate = ActivityMonitor.INVALID_HR_SAMPLE;
+    }
+    Test.assertMessage(!PinLock.wornSince(removed, since, now),
+        "a sustained run of invalid samples must end the unlock");
+    return true;
+}
+
+(:test)
+function testHistoryThatStopsShortProvesNothing(logger as Logger) as Boolean {
+    var now = 10000;
+    var since = now - 3600;
+
+    // Continuous, recent, but only reaching back half way: the rest is unknown,
+    // and unknown has to mean locked.
+    Test.assertMessage(!PinLock.wornSince(worn(now, now - 1800, 60), since, now),
+        "history ending before the unlock cannot prove wear");
+    return true;
+}
+
+// Valid samples every `spacing` seconds, newest first, from `newest` back to
+// `oldest` inclusive.
+function worn(newest as Number, oldest as Number, spacing as Number) as Array<HrSample> {
+    var samples = [] as Array<HrSample>;
+    for (var at = newest; at >= oldest; at -= spacing) {
+        samples.add(new HrSample(65, at));
+    }
+    return samples;
+}
+
+function openWith(blob as SealedBlob, pin as String) as Credentials? {
+    return blob.open(derive(pin, blob.salt, blob.iterations));
+}
+
+// The app spreads this over a timer so the watchdog never sees a long block of
+// computation; a test has nothing to yield to.
+function derive(pin as String, salt as ByteArray, iterations as Number) as ByteArray {
+    var derivation = new KeyDerivation(pin, salt, iterations);
+    while (!derivation.isDone()) {
+        derivation.step(500);
+    }
+    return derivation.key();
+}
+
 function issued(name as String, issuer as String) as Dictionary {
     var a = account(name, false, null);
     a["issuer"] = issuer;
@@ -190,4 +374,26 @@ function account(name as String, shared as Boolean, deletedAt as String?) as Dic
         "isShared" => shared,
         "deletedAt" => deletedAt
     };
+}
+
+
+// Not a pass/fail test: the number it logs is the only measurement of what a
+// PIN entry costs, and the thing to look at before changing Sealed.ITERATIONS.
+// The simulator runs on the workstation's CPU, so treat it as a floor — the
+// watch is several times slower, and the ring on the PIN screen is the real
+// measurement.
+(:test)
+function testKeyDerivationCost(logger as Logger) as Boolean {
+    var salt = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]b;
+
+    var start = System.getTimer();
+    var derivation = new KeyDerivation("1234", salt, Sealed.ITERATIONS);
+    while (!derivation.isDone()) {
+        derivation.step(500);
+    }
+    var elapsed = System.getTimer() - start;
+
+    logger.debug(Sealed.ITERATIONS.toString() + " rounds in " + elapsed.toString() + " ms (simulator)");
+    Test.assertEqual(derivation.key().size(), 32);
+    return true;
 }

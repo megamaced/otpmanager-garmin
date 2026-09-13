@@ -4,3 +4,4 @@ bin/
 *.prg.debug.xml
 *.iq
 local.properties
+tools/__pycache__/
