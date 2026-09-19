@@ -21,6 +21,12 @@ module CredentialStore {
     const USERNAME = "username";
     const APP_PASSWORD = "appPassword";
 
+    // Compiled in by tools/bake-properties.py and by nothing else: it has no
+    // settings entry, so there is nothing that can type one, and a build that
+    // baked no credentials carries an empty one.
+    const BUILD_SOURCE = "buildSource";
+    const BAKED = "local";
+
     // The sealed blob, from wherever it came. Empty when there is none, which
     // is the state a build with no PIN stays in.
     function sealedText() as String {
@@ -51,19 +57,30 @@ module CredentialStore {
     // settings screen currently says would assume the answer to the one
     // question the binding exists to ask.
     function hasUnboundCredentials() as Boolean {
-        return isUnbound(hasStoredCredentials(), boundServer(), hasBakedCredentials());
+        return isUnbound(hasStoredCredentials() || hasPropertyCredentials(),
+            boundServer(), isBakedBuild());
     }
 
     // The decision by itself, so it can be tested without a store behind it.
     //
-    // A sideload's credentials were compiled in, not issued: there is no server
-    // to have recorded and there never was one. That stays true after a PIN is
-    // set on the watch, because sealing rewrites the credentials without
-    // changing where they came from. So a missing binding only means something
-    // is wrong where the build compiled nothing in — which is every store and
-    // beta install, and the only place a sign-in can have happened.
-    function isUnbound(stored as Boolean, server as String, baked as Boolean) as Boolean {
-        return stored && server.equals("") && !baked;
+    // Credentials the build compiled in were never issued by anybody: there is
+    // no server to have recorded and there never was one. That stays true after
+    // a PIN is set on the watch, because sealing rewrites the credentials
+    // without changing where they came from. Everything else that names no
+    // server is a credential this version cannot account for.
+    //
+    // Which of the two it is has to be asked of the **build**, not of where the
+    // credentials are sitting. Until signing in existed the settings screen
+    // wrote the login name and the app password into the very properties a
+    // sideload bakes them into, so an upgraded store install looks exactly like
+    // a sideload from the storage out.
+    function isUnbound(present as Boolean, server as String, fromBuild as Boolean) as Boolean {
+        return present && server.equals("") && !fromBuild;
+    }
+
+    // Whether this build carries credentials of its own.
+    function isBakedBuild() as Boolean {
+        return baked(BUILD_SOURCE).equals(BAKED);
     }
 
     // What the app put in storage: a seal, or a signed-in app password.
@@ -73,10 +90,10 @@ module CredentialStore {
             || !stringAt(APP_PASSWORD).equals("");
     }
 
-    // What the build compiled in. Either half is enough to say this is a
-    // sideload: with a PIN, tools/bake-properties.py bakes the seal alone and
-    // blanks the username beside it.
-    function hasBakedCredentials() as Boolean {
+    // What is in the property store, wherever it came from — compiled into a
+    // sideload, or typed into Garmin Connect by a version that predates the
+    // login flow.
+    function hasPropertyCredentials() as Boolean {
         return !baked("sealed").equals("")
             || !baked("username").equals("")
             || !baked("appPassword").equals("");
@@ -113,6 +130,16 @@ module CredentialStore {
     // Signing out. A sideload falls back to whatever was baked in, which is the
     // honest answer there — a credential compiled into the .prg cannot be
     // signed out of, only rebuilt away.
+    // The copies an older version left in the property store. Blanked rather
+    // than left alone, because Config reads them as a fallback and would go on
+    // using them against whatever server the settings screen now names. A build
+    // that compiled its own in never reaches this.
+    function clearProperties() as Void {
+        Application.Properties.setValue("sealed", "");
+        Application.Properties.setValue("username", "");
+        Application.Properties.setValue("appPassword", "");
+    }
+
     function clear() as Void {
         Application.Storage.deleteValue(SEALED);
         Application.Storage.deleteValue(USERNAME);

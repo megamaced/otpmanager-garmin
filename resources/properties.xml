@@ -15,6 +15,14 @@
         <!-- Every credential, encrypted under the PIN. Written by the app when
              a PIN is set, or compiled in by tools/bake-properties.py. -->
         <property id="sealed" type="string"></property>
+
+        <!-- "local" when tools/bake-properties.py compiled credentials into
+             this build, and empty in every build that did not. The app cannot
+             otherwise tell a credential it was built with from one an earlier
+             version left in the property store, because until signing in
+             existed the settings screen wrote to these same properties. No
+             settings entry, so there is no way to type it. -->
+        <property id="buildSource" type="string"></property>
     </properties>
 
     <settings>

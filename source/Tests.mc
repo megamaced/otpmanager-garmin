@@ -360,23 +360,23 @@ function testPendingVaultPasswordReplacesTheSealedOne(logger as Logger) as Boole
 function testCachedSecretsRoundTripUnderThePinKey(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
 
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", "GitHub"), key);
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, key);
     Test.assertMessage(sealed != null, "encrypting a cached secret failed");
     Test.assertMessage(!(sealed as String).equals(RFC_SECRET_SHA1),
         "the stored form must not be the seed itself");
 
-    assertText(CacheBox.open(sealed as String, record(1, "alice", "GitHub"), key), RFC_SECRET_SHA1);
+    assertText(CacheBox.open(sealed as String, key), RFC_SECRET_SHA1);
     return true;
 }
 
 (:test)
 function testCachedSecretsNeedTheRightKey(logger as Logger) as Boolean {
     var salt = Sealed.salt();
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), derive("2468", salt, 64)) as String;
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, derive("2468", salt, 64)) as String;
 
-    Test.assertMessage(CacheBox.open(sealed, record(1, "alice", ""), derive("1357", salt, 64)) == null,
+    Test.assertMessage(CacheBox.open(sealed, derive("1357", salt, 64)) == null,
         "a wrong key must not yield a seed");
-    Test.assertMessage(CacheBox.open("AAAA", record(1, "alice", ""), derive("2468", salt, 64)) == null,
+    Test.assertMessage(CacheBox.open("AAAA", derive("2468", salt, 64)) == null,
         "a blob too short to hold an IV and a tag must be rejected");
     return true;
 }
@@ -386,7 +386,7 @@ function testCachedSecretsNeedTheRightKey(logger as Logger) as Boolean {
 (:test)
 function testTamperedCachedSecretsAreRejected(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), key) as String;
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, key) as String;
     var bytes = CacheBox.decode(sealed) as ByteArray;
 
     // The IV, a ciphertext byte, and the tag itself.
@@ -395,63 +395,83 @@ function testTamperedCachedSecretsAreRejected(logger as Logger) as Boolean {
         var edited = bytes.slice(0, bytes.size());
         edited[at[i]] = edited[at[i]] ^ 0x40;
 
-        Test.assertMessage(CacheBox.open(base64(edited), record(1, "alice", ""), key) == null,
+        Test.assertMessage(CacheBox.open(base64(edited), key) == null,
             "a blob edited at byte " + at[i].toString() + " must not open");
     }
 
     // Truncation, which changes no byte that is left.
     Test.assertMessage(
-        CacheBox.open(base64(bytes.slice(0, bytes.size() - 1)), record(1, "alice", ""), key) == null,
+        CacheBox.open(base64(bytes.slice(0, bytes.size() - 1)), key) == null,
         "a truncated blob must not open");
     return true;
 }
 
-// The tag covers the record the secret was written for, so a blob cannot be
-// moved to another account, and the parameters that turn a seed into a code
-// cannot be edited underneath it.
+// Everything the record holds is under the tag, not just the secrets: the id
+// and the issuer say which account a seed belongs to, and the digits, period,
+// algorithm and type decide what it produces.
 (:test)
-function testCachedSecretsAreTiedToTheirWholeRecord(logger as Logger) as Boolean {
-    var key = derive("2468", Sealed.salt(), 64);
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", "GitHub"), key) as String;
+function testTheEnvelopeCoversEveryFieldThatShapesACode(logger as Logger) as Boolean {
+    var base = envelope([cached(1, "alice", "GitHub")] as Array<Dictionary>, false, false);
 
-    Test.assertMessage(CacheBox.open(sealed, record(2, "alice", "GitHub"), key) == null,
-        "a blob must not open against another account's id");
-    Test.assertMessage(CacheBox.open(sealed, record(1, "alice", "GitLab"), key) == null,
-        "a blob must not open under a different issuer");
+    assertDiffers(base, envelope([cached(2, "alice", "GitHub")] as Array<Dictionary>, false, false), "the id");
+    assertDiffers(base, envelope([cached(1, "bob", "GitHub")] as Array<Dictionary>, false, false), "the name");
+    assertDiffers(base, envelope([cached(1, "alice", "GitLab")] as Array<Dictionary>, false, false), "the issuer");
 
-    // Everything that decides what the code comes out as.
-    var shifted = cached(1, "alice", "GitHub");
-    shifted["digits"] = 8;
-    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
-        "editing the digits must invalidate the blob");
-
-    shifted = cached(1, "alice", "GitHub");
-    shifted["algorithm"] = "SHA256";
-    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
-        "editing the algorithm must invalidate the blob");
-
-    shifted = cached(1, "alice", "GitHub");
-    shifted["period"] = 60;
-    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
-        "editing the period must invalidate the blob");
-
-    shifted = cached(1, "alice", "GitHub");
-    shifted["type"] = "hotp";
-    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
-        "editing the type must invalidate the blob");
+    var fields = ["digits", "algorithm", "period", "type"] as Array<String>;
+    var values = [8, "SHA256", 60, "hotp"] as Array<Object>;
+    for (var i = 0; i < fields.size(); i++) {
+        var shifted = cached(1, "alice", "GitHub");
+        shifted[fields[i]] = values[i];
+        assertDiffers(base, envelope([shifted] as Array<Dictionary>, false, false), fields[i]);
+    }
     return true;
 }
 
-// Length prefixes, so that no two different records encode to the same bytes:
-// without them an issuer and a name could be re-cut to name a different pair.
+// The flags that say how the secrets are held are inside the tag too. Leaving
+// them out let a record turn its own authentication off.
 (:test)
-function testTheCanonicalRecordCannotBeReCut(logger as Logger) as Boolean {
-    var encoded = AccountStore.canonicalRecord(cached(1, "alice", "GitHub"));
+function testTheEnvelopeCoversTheModeFlags(logger as Logger) as Boolean {
+    var accounts = [cached(1, "alice", "GitHub")] as Array<Dictionary>;
+    var base = envelope(accounts, false, true);
 
-    Test.assertMessage(!AccountStore.canonicalRecord(cached(1, "ceGitHub", "Ali")).equals(encoded),
-        "moving the boundary between two fields must change the record");
-    Test.assertMessage(!AccountStore.canonicalRecord(cached(1, "", "aliceGitHub")).equals(encoded),
-        "an empty field must not vanish from the record");
+    assertDiffers(base, envelope(accounts, true, true), "the encrypted flag");
+    assertDiffers(base, envelope(accounts, false, false), "the localSealed flag");
+
+    // And the IV and fingerprint the record is keyed on.
+    assertDiffers(AccountStore.canonicalEnvelope(7, "ff00", false, true, accounts),
+        AccountStore.canonicalEnvelope(7, "00ff", false, true, accounts), "the server IV");
+    assertDiffers(AccountStore.canonicalEnvelope(7, "ff00", false, true, accounts),
+        AccountStore.canonicalEnvelope(8, "ff00", false, true, accounts), "the fingerprint");
+    return true;
+}
+
+// Type tagged and length prefixed. Without the tag a number and the string
+// that spells it encode alike; without the prefix two fields can be re-cut;
+// and a missing field is refused outright rather than encoded as an empty one,
+// because the menu and the code screen read these back without checking.
+(:test)
+function testTheCanonicalRecordIsUnambiguous(logger as Logger) as Boolean {
+    var base = AccountStore.canonicalRecord(cached(1, "alice", "GitHub"));
+
+    var typed = cached(1, "alice", "GitHub");
+    typed["period"] = "30";
+    Test.assertMessage(AccountStore.canonicalRecord(typed) == null,
+        "a number field holding a string is not the shape this app writes");
+
+    assertDiffers(base, AccountStore.canonicalRecord(cached(1, "ceGitHub", "Ali")),
+        "the boundary between two fields");
+
+    var missing = cached(1, "alice", "");
+    var present = AccountStore.canonicalRecord(missing);
+    Test.assertMessage(present != null, "an empty issuer is still a valid record");
+    missing.remove("issuer");
+    Test.assertMessage(AccountStore.canonicalRecord(missing) == null,
+        "a field that has been deleted must not encode like an empty one");
+
+    var nulled = cached(1, "alice", "GitHub");
+    nulled["digits"] = null;
+    Test.assertMessage(AccountStore.canonicalRecord(nulled) == null,
+        "a null field is not a number");
     return true;
 }
 
@@ -461,8 +481,8 @@ function testTheCanonicalRecordCannotBeReCut(logger as Logger) as Boolean {
 function testEachCachedSecretGetsItsOwnIv(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
 
-    var first = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), key) as String;
-    var second = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), key) as String;
+    var first = CacheBox.seal(RFC_SECRET_SHA1, key) as String;
+    var second = CacheBox.seal(RFC_SECRET_SHA1, key) as String;
     Test.assertMessage(!first.equals(second),
         "the same seed sealed twice must not produce the same blob");
     return true;
@@ -499,8 +519,16 @@ function cached(id as Number, name as String, issuer as String) as Dictionary {
     };
 }
 
-function record(id as Number, name as String, issuer as String) as String {
-    return AccountStore.canonicalRecord(cached(id, name, issuer));
+function envelope(accounts as Array<Dictionary>, encrypted as Boolean,
+                  localSealed as Boolean) as String? {
+    return AccountStore.canonicalEnvelope(7, "ff00", encrypted, localSealed, accounts);
+}
+
+function assertDiffers(base as String?, other as String?, what as String) as Void {
+    Test.assertMessage(base != null && other != null,
+        "both encodings should exist when comparing " + what);
+    Test.assertMessage(!(base as String).equals(other as String),
+        "changing " + what + " must change the encoding");
 }
 
 function base64(bytes as ByteArray) as String {

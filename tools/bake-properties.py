@@ -21,6 +21,14 @@ import seal
 SOURCE = pathlib.Path("resources/properties.xml")
 SEALED = ("username", "appPassword", "otpPassword")
 
+# Set when this build carries credentials of its own. The app needs to tell
+# those from credentials an earlier version left in the property store, which
+# look identical once they are there: before signing in existed, the settings
+# screen wrote the login name and the app password to these same properties.
+CREDENTIALS = ("username", "appPassword", "sealed")
+BUILD_SOURCE = "buildSource"
+BAKED = "local"
+
 
 def read(path: pathlib.Path) -> dict[str, str]:
     """key=value, one per line.
@@ -89,6 +97,9 @@ def main() -> int:
         # The point of the exercise: the plaintext never reaches the build.
         for key in SEALED:
             values[key] = ""
+
+    if any(values.get(key) for key in CREDENTIALS):
+        values[BUILD_SOURCE] = BAKED
 
     try:
         baked = bake(SOURCE.read_text(encoding="utf-8"), values)

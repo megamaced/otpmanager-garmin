@@ -315,13 +315,17 @@ class OtpManagerApp extends Application.AppBase {
     // the app making. The cache goes with them — it was fetched with them.
     //
     // A sideload is not this: nothing there was ever issued, so a seal it made
-    // on the watch names no server and is meant to.
+    // on the watch names no server and is meant to. What is, besides a legacy
+    // seal in storage, is the login name and app password an older version
+    // asked for on the settings screen — which is why the properties are
+    // blanked here too, rather than left for Config to fall back on.
     private function discardUnboundCredentials() as Void {
         if (!CredentialStore.hasUnboundCredentials()) {
             return;
         }
 
         CredentialStore.clear();
+        CredentialStore.clearProperties();
         PinLock.forget();
         AccountStore.clearCache();
     }

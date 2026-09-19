@@ -26,6 +26,7 @@ TEMPLATE = """<resources>
         <property id="username" type="string"></property>
         <property id="appPassword" type="string"></property>
         <property id="sealed" type="string"></property>
+        <property id="buildSource" type="string"></property>
     </properties>
 </resources>
 """
@@ -84,6 +85,51 @@ class Reading(unittest.TestCase):
 
     def test_a_value_may_be_empty(self):
         self.assertEqual(self.read("pin=\n")["pin"], "")
+
+
+class BuildSource(unittest.TestCase):
+    """The marker that tells a compiled-in credential from one an older version
+    of the app left in the property store. Without it the two are
+    indistinguishable, because until signing in existed the settings screen
+    wrote the login name and the app password to these same properties."""
+
+    def bake(self, local):
+        with tempfile.TemporaryDirectory() as d:
+            source = pathlib.Path(d) / "properties.xml"
+            source.write_text(TEMPLATE, encoding="utf-8")
+            out = pathlib.Path(d) / "out.xml"
+            local_file = pathlib.Path(d) / "local.properties"
+            local_file.write_text(local, encoding="utf-8")
+
+            argv, original = sys.argv, bake.SOURCE
+            sys.argv = ["bake-properties.py", "--out", str(out), str(local_file)]
+            bake.SOURCE = source
+            try:
+                self.assertEqual(bake.main(), 0)
+            finally:
+                sys.argv, bake.SOURCE = argv, original
+
+            root = ElementTree.fromstring(out.read_text(encoding="utf-8"))
+            return {p.get("id"): (p.text or "") for p in root.iter("property")}
+
+    def test_baked_credentials_are_marked(self):
+        properties = self.bake("username=alice\nappPassword=app-pw\n")
+        self.assertEqual(properties["buildSource"], "local")
+
+    def test_a_sealed_build_is_marked_too(self):
+        # Sealing blanks the username and app password, so the seal is the only
+        # credential left to notice.
+        properties = self.bake("username=alice\nappPassword=app-pw\n"
+                               "otpPassword=hunter2\npin=1357\n")
+        self.assertEqual(properties["username"], "")
+        self.assertNotEqual(properties["sealed"], "")
+        self.assertEqual(properties["buildSource"], "local")
+
+    def test_a_build_with_no_credentials_is_not_marked(self):
+        # Nothing to protect and nothing to tell apart: this build behaves like
+        # a store build, and a sign-in on it records a server like any other.
+        properties = self.bake("serverUrl=https://cloud.example.com\n")
+        self.assertEqual(properties["buildSource"], "")
 
 
 class Sealing(unittest.TestCase):
