@@ -5,3 +5,5 @@ bin/
 *.iq
 local.properties
 tools/__pycache__/
+*.orig
+.local-build.jungle

@@ -147,8 +147,14 @@ In Garmin Connect, under the app's settings:
 | OTP Manager password | your vault password |
 
 The vault password has to be typed because nothing can tell the watch what it
-is. It is the key your secrets are encrypted under, and your server has never
-seen it either. If your vault has no password, put any non-empty value here.
+is: your server keeps only a hash of it. If your vault has no password, put any
+non-empty value here.
+
+> It is not a secret the watch keeps entirely to itself. Each refresh posts it
+> to OTP Manager's `/password/check` over HTTPS, which verifies it against that
+> hash and returns the IV your secrets are encrypted with. The server receives
+> the password to check it, and does not store the plaintext. What stays on the
+> watch is the decryption: your secrets are never decrypted server-side.
 
 Then, on the watch:
 
@@ -191,6 +197,15 @@ watch's storage and attacks it offline it buys time and no more, because a watch
 cannot afford the kind of key derivation that would make a short numeric PIN
 expensive to guess.
 
+> **While an unlock is live, offline PIN protection is suspended.** The key your
+> PIN derives is written to watch storage so the next launch can skip the
+> keypad — that is the only way Connect IQ allows a grace period to survive an
+> app exit, as it offers no protected storage to put a secret in. Anyone who
+> copies storage during those 24 hours can open your credentials without the
+> PIN and without attacking it. The key is erased when the unlock ends, but
+> only when the app next runs and notices, so it can outlive the window on a
+> watch that is not opened again.
+
 ## Limitations
 
 - **TOTP only.** HOTP accounts appear in the list but say so when opened —
@@ -220,6 +235,13 @@ password in the app's settings, both in the clear — Connect IQ has no encrypte
 storage to put them in, so every app that needs a credential is in the same
 position. A sideload with no PIN also carries both inside the `.prg`, so treat
 that file the way you would treat the passwords themselves.
+
+**The cached account list** holds secrets as the server sent them. For a vault
+with a password that is ciphertext, and the password that opens it is inside the
+seal. For a vault *without* one the server sends TOTP seeds in the clear, so
+with a PIN set they are encrypted under it before being cached — which protects
+them once an unlock has ended, though not while one is live, for the reason in
+[Locking it with a PIN](#locking-it-with-a-pin) above.
 
 Either way, what the watch holds is a Nextcloud **app password**, not your login
 password. If you lose the watch, revoke it under **Settings → Security → Devices

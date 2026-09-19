@@ -3,13 +3,14 @@
 
     <string id="SettingServerUrl">Nextcloud URL</string>
     <string id="SettingOtpPassword">OTP Manager password</string>
-    <string id="SettingOtpPasswordPrompt">The password that unlocks your OTP Manager vault. The watch cannot be told this one by the server — it never leaves your devices. Typing it again here replaces the stored one.</string>
+    <string id="SettingOtpPasswordPrompt">The password that unlocks your OTP Manager vault. It is sent to your Nextcloud server over HTTPS to be checked against the hash stored there; your secrets are decrypted on the watch, not on the server. Typing it again here replaces the stored one.</string>
 
     <string id="SignIn">Sign in</string>
     <string id="SignInSubtitle">On your phone</string>
     <string id="SignInWaiting">Open the notification on your phone and sign in to Nextcloud.</string>
     <string id="SignInFailed">Sign-in failed. Check the Nextcloud URL.</string>
     <string id="SignInTimedOut">Sign-in timed out. Try again.</string>
+    <string id="SignInWrongServer">That sign-in came from a different server. Check the Nextcloud URL.</string>
     <string id="SignOut">Sign out</string>
     <string id="Options">Options</string>
 

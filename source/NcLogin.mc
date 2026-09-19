@@ -30,7 +30,8 @@ class NcLogin {
         LOGIN_OK,
         LOGIN_FAILED,
         LOGIN_TIMED_OUT,
-        LOGIN_NO_PHONE
+        LOGIN_NO_PHONE,
+        LOGIN_WRONG_SERVER
     }
 
     // Garmin Connect Mobile has to be opened, tapped and typed into, so the
@@ -143,6 +144,16 @@ class NcLogin {
             return;
         }
 
+        // Nextcloud names the server that issued the app password, and the
+        // credential is only good for that one. If it is not the host this
+        // sign-in was started against, something relayed the login: the wearer
+        // granted access on one server and the password would be spent on
+        // another. Refuse rather than store it.
+        if (!Config.sameOrigin(credentials.server, _serverUrl)) {
+            report(LOGIN_WRONG_SERVER, null);
+            return;
+        }
+
         report(LOGIN_OK, credentials);
     }
 
@@ -155,14 +166,23 @@ class NcLogin {
             return null;
         }
 
+        var server = data["server"];
         var loginName = data["loginName"];
         var appPassword = data["appPassword"];
-        if (!(loginName instanceof String) || !(appPassword instanceof String)
+        if (!(server instanceof String) || !(loginName instanceof String)
+            || !(appPassword instanceof String)
             || loginName.equals("") || appPassword.equals("")) {
             return null;
         }
 
-        return new SignIn(loginName, appPassword);
+        // Nextcloud's own documentation says to use the server it returns with
+        // the credentials it returns. A response naming somewhere that is not
+        // an absolute HTTPS URL is not one to act on.
+        if (Config.originOf(server) == null) {
+            return null;
+        }
+
+        return new SignIn(server, loginName, appPassword);
     }
 
     function onTick() as Void {
@@ -265,10 +285,12 @@ class NcLogin {
 // app password is bad.
 class SignIn {
 
+    var server as String;
     var username as String;
     var appPassword as String;
 
-    function initialize(username as String, appPassword as String) {
+    function initialize(server as String, username as String, appPassword as String) {
+        self.server = server;
         self.username = username;
         self.appPassword = appPassword;
     }

@@ -20,6 +20,11 @@ class Config {
     var appPassword as String;
     var otpPassword as String;
 
+    // The PIN-derived key, while the app is unlocked. Held so the account cache
+    // can be encrypted under it — see CacheBox. Null on a build with no PIN,
+    // where there is no key and nothing to encrypt with.
+    private var _localKey as ByteArray?;
+
     function initialize() {
         serverUrl = trimTrailingSlash(read("serverUrl"));
 
@@ -38,6 +43,19 @@ class Config {
         otpPassword = read("otpPassword");
     }
 
+    // An app password belongs to the server that issued it and to no other.
+    // Pointing the app at a different host must not send it there — so a
+    // credential whose bound origin no longer matches counts as no credential,
+    // and the app asks for a fresh sign-in against the new server.
+    function credentialsMatchServer() as Boolean {
+        var bound = CredentialStore.boundServer();
+        if (bound.equals("")) {
+            // Baked into a sideload, where the build decided both halves.
+            return true;
+        }
+        return sameOrigin(bound, serverUrl);
+    }
+
     function isSealed() as Boolean {
         return !CredentialStore.sealedText().equals("");
     }
@@ -49,6 +67,14 @@ class Config {
             return null;
         }
         return Sealed.parse(encoded);
+    }
+
+    function localKey() as ByteArray? {
+        return _localKey;
+    }
+
+    function setLocalKey(key as ByteArray) as Void {
+        _localKey = key;
     }
 
     function unlock(credentials as Credentials) as Void {
@@ -93,6 +119,40 @@ class Config {
     // Catching it here turns that into something the wearer can act on.
     function isSecure() as Boolean {
         return isHttpsUrl(serverUrl);
+    }
+
+    // The part of a URL that decides who a credential is being sent to:
+    // scheme and authority, lowercased, with everything from the first "/",
+    // "?" or "#" dropped. Null when the URL is not an absolute HTTPS one.
+    //
+    // Paths are deliberately not compared. Nextcloud can be served from a
+    // subdirectory and its own idea of its URL — whatever overwrite.cli.url
+    // says — need not match what was typed character for character. The host
+    // is what matters: it is who receives the app password.
+    static function originOf(url as String) as String? {
+        if (!isHttpsUrl(url)) {
+            return null;
+        }
+
+        var rest = url.substring(8, url.length()) as String;
+        var chars = rest.toCharArray();
+        var end = chars.size();
+        for (var i = 0; i < chars.size(); i++) {
+            var c = chars[i];
+            if (c == '/' || c == '?' || c == '#') {
+                end = i;
+                break;
+            }
+        }
+
+        var authority = rest.substring(0, end) as String;
+        return "https://" + authority.toLower();
+    }
+
+    static function sameOrigin(a as String, b as String) as Boolean {
+        var left = originOf(a);
+        var right = originOf(b);
+        return left != null && right != null && left.equals(right);
     }
 
     // Absolute, HTTPS, and with an authority. URI schemes are case-insensitive,

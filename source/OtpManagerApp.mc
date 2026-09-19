@@ -139,7 +139,7 @@ class OtpManagerApp extends Application.AppBase {
         // because the wearer put the watch down at the keypad; what this costs
         // is a plaintext app password in watch storage until a PIN replaces it,
         // which is exactly what a build with no PIN keeps there anyway.
-        CredentialStore.storeSignIn(credentials.username, credentials.appPassword);
+        CredentialStore.storeSignIn(credentials.server, credentials.username, credentials.appPassword);
         rebuild();
 
         // Nothing to seal until the vault password is there too, and offering a
@@ -192,6 +192,13 @@ class OtpManagerApp extends Application.AppBase {
         _config.clearPendingOtpPassword();
         PinLock.remember(key);
 
+        // Any cache written before the PIN existed holds its secrets as the
+        // server sent them, which for a passwordless vault means in the clear.
+        // Re-writing it under the new key is what stops the PIN arriving too
+        // late to protect what is already stored.
+        _config.setLocalKey(key);
+        _store.persist();
+
         showFromState();
         return true;
     }
@@ -214,6 +221,9 @@ class OtpManagerApp extends Application.AppBase {
 
         PinLock.remember(key);
         _config.unlock(credentials as Credentials);
+        // Before the store is built: restoring the cache needs this key to
+        // read back any secret that was encrypted locally under it.
+        _config.setLocalKey(key);
         _store = new AccountStore(_config);
         _api = new OtpManagerApi(_config, _generation);
 
@@ -249,15 +259,16 @@ class OtpManagerApp extends Application.AppBase {
             return credentials;
         }
 
-        if (!pending.equals(credentials.otpPassword)) {
-            var updated = new Credentials(credentials.username, credentials.appPassword, pending);
-            var resealed = Sealed.sealWithKey(updated, blob.pinLength, blob.salt, Sealed.iv(), key);
+        var updated = Credentials.replacingOtpPassword(credentials, pending);
+        if (updated != null) {
+            var resealed = Sealed.sealWithKey(updated as Credentials, blob.pinLength,
+                blob.salt, Sealed.iv(), key);
             if (resealed == null) {
                 return credentials;
             }
 
             CredentialStore.storeSeal(resealed);
-            credentials = updated;
+            credentials = updated as Credentials;
         }
 
         _config.clearPendingOtpPassword();
@@ -315,7 +326,13 @@ class OtpManagerApp extends Application.AppBase {
             PinLock.forget();
             return;
         }
-        _config.unlock(credentials);
+
+        // The same check the keypad path makes. Without it, a vault password
+        // typed into the settings screen is ignored for as long as the
+        // remembered unlock keeps holding — which is up to 24 hours of
+        // refreshes failing while the new value sits there looking applied.
+        _config.unlock(applyPendingOtpPassword(blob, credentials, key));
+        _config.setLocalKey(key);
     }
 
     private function viewForState() as [WatchUi.Views, WatchUi.InputDelegates] {
@@ -337,7 +354,11 @@ class OtpManagerApp extends Application.AppBase {
         // A seal that will not parse is one made by an older version of this
         // app, before the login name was part of it. Signing in again is the
         // migration, and it is two taps.
-        if (!_config.hasCredentials()) {
+        //
+        // The same screen catches a server that has been pointed somewhere
+        // else since the credentials were issued. They belong to the old host
+        // and must not be offered to the new one.
+        if (!_config.hasCredentials() || !_config.credentialsMatchServer()) {
             return [buildSignInMenu(), new AccountMenuDelegate(false)];
         }
 
@@ -449,6 +470,9 @@ class OtpManagerApp extends Application.AppBase {
         }
         if (result == NcLogin.LOGIN_TIMED_OUT) {
             return text(Rez.Strings.SignInTimedOut);
+        }
+        if (result == NcLogin.LOGIN_WRONG_SERVER) {
+            return text(Rez.Strings.SignInWrongServer);
         }
         return text(Rez.Strings.SignInFailed);
     }

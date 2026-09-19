@@ -282,6 +282,17 @@ class Credentials {
     function isComplete() as Boolean {
         return !username.equals("") && !appPassword.equals("") && !otpPassword.equals("");
     }
+
+    // The same credentials under a vault password typed into the settings
+    // screen, or null when there is nothing to change. Separated from the
+    // resealing around it so the decision can be tested without an app, a
+    // property store or a blob.
+    static function replacingOtpPassword(credentials as Credentials, pending as String) as Credentials? {
+        if (pending.equals("") || pending.equals(credentials.otpPassword)) {
+            return null;
+        }
+        return new Credentials(credentials.username, credentials.appPassword, pending);
+    }
 }
 
 // Iterated SHA-256, run a few hundred rounds at a time so the watchdog never

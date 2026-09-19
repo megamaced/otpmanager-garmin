@@ -31,7 +31,17 @@ mkdir -p build
 # Restores a file on the way out, including on failure. Not `git checkout`:
 # that would also discard uncommitted edits to the same file, which during
 # development is most of them.
+#
+# Refuses to start when a backup is already there. One would mean an earlier
+# build died before its trap ran, so the working copy is the patched one — and
+# overwriting the backup with it would make the damage permanent on the next
+# successful build.
 restore_on_exit() {
+    if [ -e "$1.orig" ]; then
+        echo "$1.orig already exists: an earlier build did not finish." >&2
+        echo "Check it, then 'mv $1.orig $1' to undo that build's patch." >&2
+        exit 1
+    fi
     cp "$1" "$1.orig"
     # shellcheck disable=SC2064
     trap "mv '$1.orig' '$1'" EXIT
@@ -50,14 +60,35 @@ local)
         exit 1
     fi
 
-    restore_on_exit resources/properties.xml
-    python3 tools/bake-properties.py
-    "$SDK/bin/monkeyc" -f monkey.jungle -o "build/otpmanager-$device.prg" \
+    # The baked values are credentials, so nothing tracked is written: the
+    # build reads its resources from a private copy under build/ instead.
+    # Patching resources/properties.xml in place and restoring it afterwards
+    # worked until it didn't — a build killed between the two leaves a password
+    # in a file git tracks, ready to be staged, indexed or backed up.
+    #
+    # Jungle paths resolve relative to the jungle file, so the override has to
+    # sit at the repository root. Later files win, and the per-device icon
+    # lines pick up the new base.resourcePath through $(base.resourcePath).
+    LOCAL_RES=build/local-resources
+    LOCAL_JUNGLE=.local-build.jungle
+    rm -rf "$LOCAL_RES"
+    mkdir -p "$LOCAL_RES"
+    chmod 700 "$LOCAL_RES"
+    trap 'rm -rf "$LOCAL_RES" "$LOCAL_JUNGLE"' EXIT
+    cp -r resources/. "$LOCAL_RES/"
+
+    python3 tools/bake-properties.py --out "$LOCAL_RES/properties.xml"
+    printf 'base.resourcePath = %s\n' "$LOCAL_RES" > "$LOCAL_JUNGLE"
+
+    "$SDK/bin/monkeyc" -f "monkey.jungle;$LOCAL_JUNGLE" -o "build/otpmanager-$device.prg" \
         -y "$KEY" -d "$device" -w -l 3
     echo "built build/otpmanager-$device.prg with local.properties baked in"
     ;;
 
 test)
+    # The build tools first: they are the only part written in something other
+    # than Monkey C, and a regression there corrupts a credential silently.
+    python3 -m unittest discover -s tools -p 'test_*.py' -q
     "$SDK/bin/monkeyc" -f monkey.jungle -o build/test.prg -y "$KEY" \
         -d venu3s -w -l 3 --unit-test
     exec "$SDK/bin/monkeydo" build/test.prg venu3s -t

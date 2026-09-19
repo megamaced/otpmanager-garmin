@@ -299,6 +299,89 @@ function testIncompletePollResponsesAreRejected(logger as Logger) as Boolean {
     return true;
 }
 
+// An app password belongs to the server that issued it. Origin is compared
+// rather than the whole URL: Nextcloud can live in a subdirectory and its own
+// idea of its address need not match what was typed character for character.
+(:test)
+function testOriginIgnoresPathAndCase(logger as Logger) as Boolean {
+    assertText(Config.originOf("https://Cloud.Example.COM/nextcloud"), "https://cloud.example.com");
+    assertText(Config.originOf("https://cloud.example.com:8443/x?y#z"), "https://cloud.example.com:8443");
+    Test.assertMessage(Config.originOf("http://cloud.example.com") == null, "plain http has no usable origin");
+    Test.assertMessage(Config.originOf("not a url") == null, "a non-URL has no origin");
+
+    Test.assertMessage(Config.sameOrigin("https://a.example.com/nextcloud", "https://A.EXAMPLE.COM"),
+        "path and case must not make two origins differ");
+    Test.assertMessage(!Config.sameOrigin("https://a.example.com", "https://b.example.com"),
+        "a different host is a different origin");
+    Test.assertMessage(!Config.sameOrigin("https://a.example.com", "https://a.example.com.evil.net"),
+        "a suffix match is not an origin match");
+    Test.assertMessage(!Config.sameOrigin("https://a.example.com:8443", "https://a.example.com"),
+        "a different port is a different origin");
+    return true;
+}
+
+// Login Flow v2 names the server that issued the credentials, and a response
+// that does not is not one to store.
+(:test)
+function testPollResponseMustNameItsServer(logger as Logger) as Boolean {
+    Test.assertMessage(NcLogin.signInFrom({
+        "loginName" => "alice", "appPassword" => "secret"
+    }) == null, "a response with no server is not a sign-in");
+
+    Test.assertMessage(NcLogin.signInFrom({
+        "server" => "http://cloud.example.com", "loginName" => "alice", "appPassword" => "secret"
+    }) == null, "a server that is not https is not a sign-in");
+    return true;
+}
+
+// A vault password typed into the settings screen while a seal already holds
+// one. Both the keypad path and the resumed-unlock path run through this.
+(:test)
+function testPendingVaultPasswordReplacesTheSealedOne(logger as Logger) as Boolean {
+    var current = new Credentials("alice", "app-pw", "old-vault");
+
+    var updated = Credentials.replacingOtpPassword(current, "new-vault");
+    Test.assertMessage(updated != null, "a different pending password must replace the sealed one");
+    Test.assertEqual((updated as Credentials).otpPassword, "new-vault");
+    Test.assertEqual((updated as Credentials).username, "alice");
+    Test.assertEqual((updated as Credentials).appPassword, "app-pw");
+
+    Test.assertMessage(Credentials.replacingOtpPassword(current, "") == null,
+        "an empty settings field is not a change");
+    Test.assertMessage(Credentials.replacingOtpPassword(current, "old-vault") == null,
+        "the same password again is not a change");
+    return true;
+}
+
+// A vault with no password sends base32 seeds in the clear, and caching those
+// verbatim handed every one of them to anyone who copied watch storage.
+(:test)
+function testCachedSecretsRoundTripUnderThePinKey(logger as Logger) as Boolean {
+    var key = derive("2468", Sealed.salt(), 64);
+    var iv = Sealed.iv();
+
+    var sealed = CacheBox.encrypt(RFC_SECRET_SHA1, key, iv);
+    Test.assertMessage(sealed != null, "encrypting a cached secret failed");
+    Test.assertMessage(!(sealed as String).equals(RFC_SECRET_SHA1),
+        "the stored form must not be the seed itself");
+
+    assertText(CacheBox.decrypt(sealed as String, key, iv), RFC_SECRET_SHA1);
+    return true;
+}
+
+(:test)
+function testCachedSecretsNeedTheRightKey(logger as Logger) as Boolean {
+    var salt = Sealed.salt();
+    var iv = Sealed.iv();
+    var sealed = CacheBox.encrypt(RFC_SECRET_SHA1, derive("2468", salt, 64), iv) as String;
+
+    Test.assertMessage(CacheBox.decrypt(sealed, derive("1357", salt, 64), iv) == null,
+        "a wrong key must not yield a seed");
+    Test.assertMessage(CacheBox.decrypt("AAAA", derive("2468", salt, 64), iv) == null,
+        "a non-block-sized ciphertext must be rejected");
+    return true;
+}
+
 (:test)
 function testMalformedBlobsAreRejected(logger as Logger) as Boolean {
     Test.assertMessage(Sealed.parse("") == null, "an empty blob must be rejected");
@@ -389,6 +472,13 @@ function worn(newest as Number, oldest as Number, spacing as Number) as Array<Hr
         samples.add(new HrSample(65, at));
     }
     return samples;
+}
+
+// Test.assertEqual refuses a nullable first argument, and every one of these
+// returns null for the failure case it is being checked against.
+function assertText(actual as String?, expected as String) as Void {
+    Test.assertMessage(actual != null, "expected '" + expected + "', got null");
+    Test.assertEqual(actual as String, expected);
 }
 
 function openWith(blob as SealedBlob, pin as String) as Credentials? {
