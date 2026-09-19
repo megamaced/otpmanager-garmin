@@ -212,10 +212,10 @@ class AccountStore {
                 return null;
             }
 
-            var label = labelOf(account);
+            var record = canonicalRecord(account);
             var changed = sealing
-                ? CacheBox.seal(secret, label, key)
-                : CacheBox.open(secret, label, key);
+                ? CacheBox.seal(secret, record, key)
+                : CacheBox.open(secret, record, key);
             if (changed == null) {
                 return null;
             }
@@ -232,17 +232,34 @@ class AccountStore {
         return result;
     }
 
-    // What a cached secret belongs to, mixed into its tag so that a blob
-    // cannot be lifted from one account and read as another's seed. Length
-    // prefixed, so an issuer and a name cannot be re-cut to name a different
-    // pair.
-    private function labelOf(account as Dictionary) as String {
-        var issuer = text(account, "issuer");
-        return issuer.length().toString() + ":" + issuer + text(account, "name");
+    // Everything cached beside the secret, in a fixed order and with every
+    // field length prefixed, so that no two different records can encode to the
+    // same bytes. This is what the secret's tag is taken over, so editing any
+    // of it invalidates the blob rather than quietly changing what the watch
+    // shows — and the parameters matter as much as the name does, since the
+    // digits, the period and the algorithm decide the code just as the seed
+    // does. The id is what tells apart two accounts that are otherwise
+    // identical, which nothing here stops the vault from holding.
+    static function canonicalRecord(account as Dictionary) as String {
+        var fields = ["id", "name", "issuer", "type", "algorithm", "period", "digits"] as Array<String>;
+
+        var canonical = "";
+        for (var i = 0; i < fields.size(); i++) {
+            var value = text(account, fields[i]);
+            canonical += value.length().toString() + ":" + value;
+        }
+        return canonical;
     }
 
-    private function text(account as Dictionary, key as String) as String {
+    // Numbers as well as strings: the id, the period and the digits are counts.
+    private static function text(account as Dictionary, key as String) as String {
         var value = account[key];
-        return value instanceof String ? value : "";
+        if (value instanceof String) {
+            return value;
+        }
+        if (value instanceof Number) {
+            return value.toString();
+        }
+        return "";
     }
 }

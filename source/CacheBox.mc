@@ -13,11 +13,11 @@ import Toybox.StringUtil;
 //
 //   iv:16  ciphertext:16n  tag:32        base64, one blob per secret
 //
-// Encrypt-then-MAC, with the account's label mixed into the tag, so a cache
-// that has been edited, or whose blobs have been swapped between accounts, is
-// rejected rather than turned into a plausible wrong code. The IV is per
-// secret rather than per cache: one IV across a list would make two identical
-// seeds encrypt identically.
+// Encrypt-then-MAC, with the rest of the account record mixed into the tag as
+// associated data, so a cache that has been edited — its secrets, or the
+// parameters that turn a secret into a code — is rejected rather than turned
+// into a plausible wrong number. The IV is per secret rather than per cache:
+// one IV across a list would make two identical seeds encrypt identically.
 //
 // The key is the PIN-derived one rather than a second secret, because there is
 // nowhere on Connect IQ to keep a second secret that is any safer. That has a
@@ -30,7 +30,7 @@ module CacheBox {
     const IV_SIZE = 16;
     const TAG_SIZE = 32;
 
-    function seal(plain as String, label as String, key as ByteArray) as String? {
+    function seal(plain as String, associated as String, key as ByteArray) as String? {
         var iv = Cryptography.randomBytes(IV_SIZE);
 
         var cipherText;
@@ -55,7 +55,7 @@ module CacheBox {
 
         var blob = []b;
         blob = blob.addAll(authenticated);
-        blob = blob.addAll(tag(key, label, authenticated));
+        blob = blob.addAll(tag(key, associated, authenticated));
 
         return StringUtil.convertEncodedString(blob, {
             :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
@@ -63,7 +63,7 @@ module CacheBox {
         }) as String;
     }
 
-    function open(encoded as String, label as String, key as ByteArray) as String? {
+    function open(encoded as String, associated as String, key as ByteArray) as String? {
         var decoded = decode(encoded);
         if (decoded == null) {
             return null;
@@ -80,7 +80,7 @@ module CacheBox {
         // secret restored from an edited cache is a wrong code rather than a
         // missing one.
         var authenticated = blob.slice(0, bodySize);
-        if (!sameBytes(blob.slice(bodySize, blob.size()), tag(key, label, authenticated))) {
+        if (!sameBytes(blob.slice(bodySize, blob.size()), tag(key, associated, authenticated))) {
             return null;
         }
 
@@ -100,15 +100,16 @@ module CacheBox {
         return unpad(plain);
     }
 
-    // The label is what stops a blob being lifted from one account and read as
-    // another's seed: the tag only verifies where the secret was written.
-    function tag(key as ByteArray, label as String, body as ByteArray) as ByteArray {
+    // The associated data is what stops a blob being lifted from one account
+    // and read as another's seed, or its parameters being edited underneath it:
+    // the tag only verifies against the record the secret was written for.
+    function tag(key as ByteArray, associated as String, body as ByteArray) as ByteArray {
         var hmac = new Cryptography.HashBasedMessageAuthenticationCode({
             :algorithm => Cryptography.HASH_SHA256,
             :key => macKey(key)
         });
         hmac.update(body);
-        hmac.update(Sealed.utf8(label));
+        hmac.update(Sealed.utf8(associated));
         return hmac.digest();
     }
 

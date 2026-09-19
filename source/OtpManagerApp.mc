@@ -313,6 +313,9 @@ class OtpManagerApp extends Application.AppBase {
     // taps; the alternative is trusting the settings screen to still name the
     // host they came from, which is the assumption the binding exists to stop
     // the app making. The cache goes with them — it was fetched with them.
+    //
+    // A sideload is not this: nothing there was ever issued, so a seal it made
+    // on the watch names no server and is meant to.
     private function discardUnboundCredentials() as Void {
         if (!CredentialStore.hasUnboundCredentials()) {
             return;

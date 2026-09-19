@@ -360,23 +360,23 @@ function testPendingVaultPasswordReplacesTheSealedOne(logger as Logger) as Boole
 function testCachedSecretsRoundTripUnderThePinKey(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
 
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "6:GitHubalice", key);
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", "GitHub"), key);
     Test.assertMessage(sealed != null, "encrypting a cached secret failed");
     Test.assertMessage(!(sealed as String).equals(RFC_SECRET_SHA1),
         "the stored form must not be the seed itself");
 
-    assertText(CacheBox.open(sealed as String, "6:GitHubalice", key), RFC_SECRET_SHA1);
+    assertText(CacheBox.open(sealed as String, record(1, "alice", "GitHub"), key), RFC_SECRET_SHA1);
     return true;
 }
 
 (:test)
 function testCachedSecretsNeedTheRightKey(logger as Logger) as Boolean {
     var salt = Sealed.salt();
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", derive("2468", salt, 64)) as String;
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), derive("2468", salt, 64)) as String;
 
-    Test.assertMessage(CacheBox.open(sealed, "0:alice", derive("1357", salt, 64)) == null,
+    Test.assertMessage(CacheBox.open(sealed, record(1, "alice", ""), derive("1357", salt, 64)) == null,
         "a wrong key must not yield a seed");
-    Test.assertMessage(CacheBox.open("AAAA", "0:alice", derive("2468", salt, 64)) == null,
+    Test.assertMessage(CacheBox.open("AAAA", record(1, "alice", ""), derive("2468", salt, 64)) == null,
         "a blob too short to hold an IV and a tag must be rejected");
     return true;
 }
@@ -386,7 +386,7 @@ function testCachedSecretsNeedTheRightKey(logger as Logger) as Boolean {
 (:test)
 function testTamperedCachedSecretsAreRejected(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", key) as String;
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), key) as String;
     var bytes = CacheBox.decode(sealed) as ByteArray;
 
     // The IV, a ciphertext byte, and the tag itself.
@@ -395,28 +395,63 @@ function testTamperedCachedSecretsAreRejected(logger as Logger) as Boolean {
         var edited = bytes.slice(0, bytes.size());
         edited[at[i]] = edited[at[i]] ^ 0x40;
 
-        Test.assertMessage(CacheBox.open(base64(edited), "0:alice", key) == null,
+        Test.assertMessage(CacheBox.open(base64(edited), record(1, "alice", ""), key) == null,
             "a blob edited at byte " + at[i].toString() + " must not open");
     }
 
     // Truncation, which changes no byte that is left.
     Test.assertMessage(
-        CacheBox.open(base64(bytes.slice(0, bytes.size() - 1)), "0:alice", key) == null,
+        CacheBox.open(base64(bytes.slice(0, bytes.size() - 1)), record(1, "alice", ""), key) == null,
         "a truncated blob must not open");
     return true;
 }
 
-// The tag covers which account the secret belongs to, so two blobs cannot be
-// swapped to make one account's code appear under another's name.
+// The tag covers the record the secret was written for, so a blob cannot be
+// moved to another account, and the parameters that turn a seed into a code
+// cannot be edited underneath it.
 (:test)
-function testCachedSecretsCannotMoveBetweenAccounts(logger as Logger) as Boolean {
+function testCachedSecretsAreTiedToTheirWholeRecord(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
-    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "6:GitHubalice", key) as String;
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", "GitHub"), key) as String;
 
-    Test.assertMessage(CacheBox.open(sealed, "6:GitLabalice", key) == null,
-        "a blob must not open under a different account");
-    Test.assertMessage(CacheBox.open(sealed, "0:GitHubalice", key) == null,
-        "an issuer and a name must not be re-cut into a different pair");
+    Test.assertMessage(CacheBox.open(sealed, record(2, "alice", "GitHub"), key) == null,
+        "a blob must not open against another account's id");
+    Test.assertMessage(CacheBox.open(sealed, record(1, "alice", "GitLab"), key) == null,
+        "a blob must not open under a different issuer");
+
+    // Everything that decides what the code comes out as.
+    var shifted = cached(1, "alice", "GitHub");
+    shifted["digits"] = 8;
+    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
+        "editing the digits must invalidate the blob");
+
+    shifted = cached(1, "alice", "GitHub");
+    shifted["algorithm"] = "SHA256";
+    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
+        "editing the algorithm must invalidate the blob");
+
+    shifted = cached(1, "alice", "GitHub");
+    shifted["period"] = 60;
+    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
+        "editing the period must invalidate the blob");
+
+    shifted = cached(1, "alice", "GitHub");
+    shifted["type"] = "hotp";
+    Test.assertMessage(CacheBox.open(sealed, AccountStore.canonicalRecord(shifted), key) == null,
+        "editing the type must invalidate the blob");
+    return true;
+}
+
+// Length prefixes, so that no two different records encode to the same bytes:
+// without them an issuer and a name could be re-cut to name a different pair.
+(:test)
+function testTheCanonicalRecordCannotBeReCut(logger as Logger) as Boolean {
+    var encoded = AccountStore.canonicalRecord(cached(1, "alice", "GitHub"));
+
+    Test.assertMessage(!AccountStore.canonicalRecord(cached(1, "ceGitHub", "Ali")).equals(encoded),
+        "moving the boundary between two fields must change the record");
+    Test.assertMessage(!AccountStore.canonicalRecord(cached(1, "", "aliceGitHub")).equals(encoded),
+        "an empty field must not vanish from the record");
     return true;
 }
 
@@ -426,26 +461,46 @@ function testCachedSecretsCannotMoveBetweenAccounts(logger as Logger) as Boolean
 function testEachCachedSecretGetsItsOwnIv(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
 
-    var first = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", key) as String;
-    var second = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", key) as String;
+    var first = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), key) as String;
+    var second = CacheBox.seal(RFC_SECRET_SHA1, record(1, "alice", ""), key) as String;
     Test.assertMessage(!first.equals(second),
         "the same seed sealed twice must not produce the same blob");
     return true;
 }
 
-// Credentials stored before the app recorded which server issued them. An
-// empty binding on a sideload is not the same thing: nothing there was issued.
+// Credentials stored before the app recorded which server issued them, which
+// are discarded at startup. Two things that look identical in storage are not
+// the same and must survive: a sideload's compiled-in credentials, and the seal
+// it makes from them when a PIN is chosen on the watch.
 (:test)
 function testUnboundStoredCredentialsAreRecognised(logger as Logger) as Boolean {
-    Test.assertMessage(CredentialStore.isUnbound("", "alice", "app-pw", ""),
-        "a stored app password with no bound server is unbound");
-    Test.assertMessage(CredentialStore.isUnbound("c2VhbA==", "", "", ""),
-        "a stored seal with no bound server is unbound");
-    Test.assertMessage(!CredentialStore.isUnbound("", "alice", "app-pw", "https://cloud.example.com"),
-        "credentials that name their server are bound");
-    Test.assertMessage(!CredentialStore.isUnbound("", "", "", ""),
+    Test.assertMessage(CredentialStore.isUnbound(true, "", false),
+        "a stored credential naming no server, in a build that compiled none in, is unbound");
+    Test.assertMessage(!CredentialStore.isUnbound(true, "", true),
+        "a sideload's own seal names no server and never could");
+    Test.assertMessage(!CredentialStore.isUnbound(true, "https://cloud.example.com", false),
+        "a credential that names its server is bound");
+    Test.assertMessage(!CredentialStore.isUnbound(false, "", false),
         "an empty store has nothing to discard");
     return true;
+}
+
+// An account as it is held in the cache, and its canonical encoding.
+function cached(id as Number, name as String, issuer as String) as Dictionary {
+    return {
+        "id" => id,
+        "name" => name,
+        "issuer" => issuer,
+        "secret" => RFC_SECRET_SHA1,
+        "type" => "totp",
+        "period" => 30,
+        "algorithm" => "SHA1",
+        "digits" => 6
+    };
+}
+
+function record(id as Number, name as String, issuer as String) as String {
+    return AccountStore.canonicalRecord(cached(id, name, issuer));
 }
 
 function base64(bytes as ByteArray) as String {

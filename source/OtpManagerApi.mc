@@ -138,6 +138,10 @@ class OtpManagerApi {
             }
 
             accounts.add({
+                // Kept for the cache's integrity tag rather than for display:
+                // it is the only field that tells two otherwise identical
+                // accounts apart. See AccountStore.canonicalRecord.
+                "id" => asNumber(item, "id", 0),
                 "name" => asString(item, "name", "?"),
                 "issuer" => asString(item, "issuer", ""),
                 "secret" => item["secret"],

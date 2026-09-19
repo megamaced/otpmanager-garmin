@@ -51,20 +51,35 @@ module CredentialStore {
     // settings screen currently says would assume the answer to the one
     // question the binding exists to ask.
     function hasUnboundCredentials() as Boolean {
-        return isUnbound(stringAt(SEALED), stringAt(USERNAME), stringAt(APP_PASSWORD),
-            boundServer());
+        return isUnbound(hasStoredCredentials(), boundServer(), hasBakedCredentials());
     }
 
     // The decision by itself, so it can be tested without a store behind it.
-    // Only what the app wrote counts, which is why every argument comes from
-    // storage: a sideload's credentials are compiled into the .prg, were never
-    // issued to anybody, and cannot be deleted at runtime anyway.
-    function isUnbound(sealed as String, username as String, appPassword as String,
-                       server as String) as Boolean {
-        if (!server.equals("")) {
-            return false;
-        }
-        return !sealed.equals("") || !username.equals("") || !appPassword.equals("");
+    //
+    // A sideload's credentials were compiled in, not issued: there is no server
+    // to have recorded and there never was one. That stays true after a PIN is
+    // set on the watch, because sealing rewrites the credentials without
+    // changing where they came from. So a missing binding only means something
+    // is wrong where the build compiled nothing in — which is every store and
+    // beta install, and the only place a sign-in can have happened.
+    function isUnbound(stored as Boolean, server as String, baked as Boolean) as Boolean {
+        return stored && server.equals("") && !baked;
+    }
+
+    // What the app put in storage: a seal, or a signed-in app password.
+    function hasStoredCredentials() as Boolean {
+        return !stringAt(SEALED).equals("")
+            || !stringAt(USERNAME).equals("")
+            || !stringAt(APP_PASSWORD).equals("");
+    }
+
+    // What the build compiled in. Either half is enough to say this is a
+    // sideload: with a PIN, tools/bake-properties.py bakes the seal alone and
+    // blanks the username beside it.
+    function hasBakedCredentials() as Boolean {
+        return !baked("sealed").equals("")
+            || !baked("username").equals("")
+            || !baked("appPassword").equals("");
     }
 
     // What a sign-in produces. In the clear, because until a PIN exists there
@@ -85,8 +100,10 @@ module CredentialStore {
     }
 
     // Replaces the plaintext rather than sitting beside it: after this the only
-    // copy of either password is inside the blob. The bound server stays — it
-    // is not a secret, and the seal has to keep belonging to one host.
+    // copy of either password is inside the blob. The bound server is left
+    // exactly as it was — it is not a secret, a seal made from signed-in
+    // credentials has to keep belonging to the host that issued them, and one
+    // made from compiled-in credentials has no host to belong to.
     function storeSeal(blob as String) as Void {
         Application.Storage.setValue(SEALED, blob);
         Application.Storage.deleteValue(USERNAME);
