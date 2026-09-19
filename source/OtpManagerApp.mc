@@ -36,6 +36,7 @@ class OtpManagerApp extends Application.AppBase {
 
     function initialize() {
         AppBase.initialize();
+        discardUnboundCredentials();
         _config = new Config();
         resumeUnlock();
         _store = new AccountStore(_config);
@@ -305,6 +306,21 @@ class OtpManagerApp extends Application.AppBase {
     private function showFromState() as Void {
         var next = viewForState();
         WatchUi.switchToView(next[0], next[1] as WatchUi.InputDelegates, WatchUi.SLIDE_IMMEDIATE);
+    }
+
+    // Credentials stored by a version of the app that did not record which
+    // server issued them. Signing in again is what binds them, and it is two
+    // taps; the alternative is trusting the settings screen to still name the
+    // host they came from, which is the assumption the binding exists to stop
+    // the app making. The cache goes with them — it was fetched with them.
+    private function discardUnboundCredentials() as Void {
+        if (!CredentialStore.hasUnboundCredentials()) {
+            return;
+        }
+
+        CredentialStore.clear();
+        PinLock.forget();
+        AccountStore.clearCache();
     }
 
     // An unlock from an earlier launch that is still inside its 24 hours and

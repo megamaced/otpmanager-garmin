@@ -46,6 +46,27 @@ module CredentialStore {
         return stringAt(SERVER);
     }
 
+    // Credentials this app wrote before it recorded which server had issued
+    // them. There is no way to find out now, and binding them to whatever the
+    // settings screen currently says would assume the answer to the one
+    // question the binding exists to ask.
+    function hasUnboundCredentials() as Boolean {
+        return isUnbound(stringAt(SEALED), stringAt(USERNAME), stringAt(APP_PASSWORD),
+            boundServer());
+    }
+
+    // The decision by itself, so it can be tested without a store behind it.
+    // Only what the app wrote counts, which is why every argument comes from
+    // storage: a sideload's credentials are compiled into the .prg, were never
+    // issued to anybody, and cannot be deleted at runtime anyway.
+    function isUnbound(sealed as String, username as String, appPassword as String,
+                       server as String) as Boolean {
+        if (!server.equals("")) {
+            return false;
+        }
+        return !sealed.equals("") || !username.equals("") || !appPassword.equals("");
+    }
+
     // What a sign-in produces. In the clear, because until a PIN exists there
     // is nothing to encrypt under — but on the watch only, and the vault
     // password is not here: that one is typed into the settings screen and

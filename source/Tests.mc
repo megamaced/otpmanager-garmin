@@ -2,6 +2,7 @@ import Toybox.System;
 import Toybox.ActivityMonitor;
 import Toybox.Cryptography;
 import Toybox.Lang;
+import Toybox.StringUtil;
 import Toybox.Test;
 
 // RFC 6238 appendix B vectors, plus a ciphertext produced the way the OTP
@@ -358,28 +359,100 @@ function testPendingVaultPasswordReplacesTheSealedOne(logger as Logger) as Boole
 (:test)
 function testCachedSecretsRoundTripUnderThePinKey(logger as Logger) as Boolean {
     var key = derive("2468", Sealed.salt(), 64);
-    var iv = Sealed.iv();
 
-    var sealed = CacheBox.encrypt(RFC_SECRET_SHA1, key, iv);
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "6:GitHubalice", key);
     Test.assertMessage(sealed != null, "encrypting a cached secret failed");
     Test.assertMessage(!(sealed as String).equals(RFC_SECRET_SHA1),
         "the stored form must not be the seed itself");
 
-    assertText(CacheBox.decrypt(sealed as String, key, iv), RFC_SECRET_SHA1);
+    assertText(CacheBox.open(sealed as String, "6:GitHubalice", key), RFC_SECRET_SHA1);
     return true;
 }
 
 (:test)
 function testCachedSecretsNeedTheRightKey(logger as Logger) as Boolean {
     var salt = Sealed.salt();
-    var iv = Sealed.iv();
-    var sealed = CacheBox.encrypt(RFC_SECRET_SHA1, derive("2468", salt, 64), iv) as String;
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", derive("2468", salt, 64)) as String;
 
-    Test.assertMessage(CacheBox.decrypt(sealed, derive("1357", salt, 64), iv) == null,
+    Test.assertMessage(CacheBox.open(sealed, "0:alice", derive("1357", salt, 64)) == null,
         "a wrong key must not yield a seed");
-    Test.assertMessage(CacheBox.decrypt("AAAA", derive("2468", salt, 64), iv) == null,
-        "a non-block-sized ciphertext must be rejected");
+    Test.assertMessage(CacheBox.open("AAAA", "0:alice", derive("2468", salt, 64)) == null,
+        "a blob too short to hold an IV and a tag must be rejected");
     return true;
+}
+
+// Every byte of the blob is covered by the tag, so an edited cache is refused
+// outright rather than decrypted into a code that is quietly wrong.
+(:test)
+function testTamperedCachedSecretsAreRejected(logger as Logger) as Boolean {
+    var key = derive("2468", Sealed.salt(), 64);
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", key) as String;
+    var bytes = CacheBox.decode(sealed) as ByteArray;
+
+    // The IV, a ciphertext byte, and the tag itself.
+    var at = [0, CacheBox.IV_SIZE + 1, bytes.size() - 1] as Array<Number>;
+    for (var i = 0; i < at.size(); i++) {
+        var edited = bytes.slice(0, bytes.size());
+        edited[at[i]] = edited[at[i]] ^ 0x40;
+
+        Test.assertMessage(CacheBox.open(base64(edited), "0:alice", key) == null,
+            "a blob edited at byte " + at[i].toString() + " must not open");
+    }
+
+    // Truncation, which changes no byte that is left.
+    Test.assertMessage(
+        CacheBox.open(base64(bytes.slice(0, bytes.size() - 1)), "0:alice", key) == null,
+        "a truncated blob must not open");
+    return true;
+}
+
+// The tag covers which account the secret belongs to, so two blobs cannot be
+// swapped to make one account's code appear under another's name.
+(:test)
+function testCachedSecretsCannotMoveBetweenAccounts(logger as Logger) as Boolean {
+    var key = derive("2468", Sealed.salt(), 64);
+    var sealed = CacheBox.seal(RFC_SECRET_SHA1, "6:GitHubalice", key) as String;
+
+    Test.assertMessage(CacheBox.open(sealed, "6:GitLabalice", key) == null,
+        "a blob must not open under a different account");
+    Test.assertMessage(CacheBox.open(sealed, "0:GitHubalice", key) == null,
+        "an issuer and a name must not be re-cut into a different pair");
+    return true;
+}
+
+// One IV per cache would have made two accounts with the same seed encrypt to
+// the same bytes, which is a leak the cache does not have to have.
+(:test)
+function testEachCachedSecretGetsItsOwnIv(logger as Logger) as Boolean {
+    var key = derive("2468", Sealed.salt(), 64);
+
+    var first = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", key) as String;
+    var second = CacheBox.seal(RFC_SECRET_SHA1, "0:alice", key) as String;
+    Test.assertMessage(!first.equals(second),
+        "the same seed sealed twice must not produce the same blob");
+    return true;
+}
+
+// Credentials stored before the app recorded which server issued them. An
+// empty binding on a sideload is not the same thing: nothing there was issued.
+(:test)
+function testUnboundStoredCredentialsAreRecognised(logger as Logger) as Boolean {
+    Test.assertMessage(CredentialStore.isUnbound("", "alice", "app-pw", ""),
+        "a stored app password with no bound server is unbound");
+    Test.assertMessage(CredentialStore.isUnbound("c2VhbA==", "", "", ""),
+        "a stored seal with no bound server is unbound");
+    Test.assertMessage(!CredentialStore.isUnbound("", "alice", "app-pw", "https://cloud.example.com"),
+        "credentials that name their server are bound");
+    Test.assertMessage(!CredentialStore.isUnbound("", "", "", ""),
+        "an empty store has nothing to discard");
+    return true;
+}
+
+function base64(bytes as ByteArray) as String {
+    return StringUtil.convertEncodedString(bytes, {
+        :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,
+        :toRepresentation => StringUtil.REPRESENTATION_STRING_BASE64
+    }) as String;
 }
 
 (:test)

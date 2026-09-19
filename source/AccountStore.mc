@@ -2,8 +2,9 @@ import Toybox.Application;
 import Toybox.Lang;
 
 // Caches the last successful fetch so the app opens straight into the account
-// list, and still works when the phone is out of range. The cached secrets stay
-// exactly as the server sent them: encrypted, when the vault has a password.
+// list, and still works when the phone is out of range. A vault with a password
+// sends ciphertext, which is cached as it arrived; a vault without one sends
+// seeds, which are encrypted under the PIN key first — see CacheBox.
 class AccountStore {
 
     private static const STORAGE_KEY = "vault";
@@ -28,6 +29,15 @@ class AccountStore {
         // and restoring would throw away a cache that is about to be valid.
         if (config.isComplete()) {
             restore();
+            return;
+        }
+
+        // Sealed, so the cache cannot be read here — but whether its secrets
+        // are in the clear can be seen without any key, and a PIN that only
+        // takes effect at the next unlock leaves open exactly what it was set
+        // to close.
+        if (config.isSealed()) {
+            discardIfPlaintext();
         }
     }
 
@@ -69,18 +79,22 @@ class AccountStore {
         }
 
         var accounts = _accounts;
-        var localIv = "";
+        var localSealed = false;
 
         // Only a passwordless vault needs this. Anything else is already
         // ciphertext whose key lives inside the seal.
         var key = _config.localKey();
         if (!_encrypted && key != null) {
-            var iv = Sealed.iv();
-            var sealedAccounts = withSecrets(_accounts, key, iv, true);
-            if (sealedAccounts != null) {
-                accounts = sealedAccounts as Array<Dictionary>;
-                localIv = CacheBox.toHex(iv);
+            var sealedAccounts = withSecrets(_accounts, key as ByteArray, true);
+            if (sealedAccounts == null) {
+                // Falling back to writing the seeds in the clear would undo
+                // the PIN silently. Dropping the cache costs a refresh the
+                // next time the app opens, and nothing else.
+                Application.Storage.deleteValue(STORAGE_KEY);
+                return;
             }
+            accounts = sealedAccounts as Array<Dictionary>;
+            localSealed = true;
         }
 
         var record = {
@@ -88,7 +102,7 @@ class AccountStore {
             "accounts" => accounts,
             "iv" => _iv,
             "encrypted" => _encrypted,
-            "localIv" => localIv
+            "localSealed" => localSealed
         };
         Application.Storage.setValue(STORAGE_KEY, record as Application.Storage.ValueType);
     }
@@ -96,6 +110,14 @@ class AccountStore {
     private function restore() as Void {
         var cached = Application.Storage.getValue(STORAGE_KEY);
         if (!(cached instanceof Dictionary)) {
+            return;
+        }
+
+        // A record from the build that kept one IV per cache rather than one
+        // per secret. Its secrets are ciphertext that this code would read as
+        // seeds, so it is dropped rather than misread.
+        if (cached.hasKey("localIv")) {
+            Application.Storage.deleteValue(STORAGE_KEY);
             return;
         }
 
@@ -117,14 +139,12 @@ class AccountStore {
         // Secrets encrypted locally under the PIN key when they were cached.
         // Without the key they are unreadable, which is the point — drop the
         // cache rather than keep something that cannot be used.
-        var localIv = cached["localIv"];
-        if (localIv instanceof String && !localIv.equals("")) {
+        var localSealed = isSealedLocally(cached);
+        if (localSealed) {
             var key = _config.localKey();
-            var ivBytes = CacheBox.fromHex(localIv);
-            var opened = key == null || ivBytes == null
+            var opened = key == null
                 ? null
-                : withSecrets(accounts as Array<Dictionary>, key as ByteArray,
-                    ivBytes as ByteArray, false);
+                : withSecrets(accounts as Array<Dictionary>, key as ByteArray, false);
             if (opened == null) {
                 Application.Storage.deleteValue(STORAGE_KEY);
                 return;
@@ -136,6 +156,45 @@ class AccountStore {
         _iv = iv;
         _encrypted = encrypted;
         _loaded = true;
+
+        // A cache written before there was a PIN, or by a version that did not
+        // encrypt one, still holds a passwordless vault's seeds as the server
+        // sent them. Rewriting it the moment the key is in hand is what stops
+        // it outliving the PIN that was meant to cover it.
+        if (!localSealed && !_encrypted && _config.localKey() != null) {
+            persist();
+        }
+    }
+
+    // Deletes a cached record whose secrets are held as the server sent them.
+    // Takes no key: whether they were encrypted, and under whose, is recorded
+    // in the clear beside them.
+    private function discardIfPlaintext() as Void {
+        var cached = Application.Storage.getValue(STORAGE_KEY);
+        if (!(cached instanceof Dictionary)) {
+            return;
+        }
+
+        var encrypted = cached["encrypted"];
+        if (encrypted instanceof Boolean && encrypted) {
+            // Server ciphertext, and the password that opens it is in the seal.
+            return;
+        }
+
+        if (!isSealedLocally(cached)) {
+            Application.Storage.deleteValue(STORAGE_KEY);
+        }
+    }
+
+    // The stored record's own type, spelled out: a value that came back from
+    // Application.Storage will not pass as a bare Dictionary.
+    private function isSealedLocally(
+            cached as Dictionary<Application.Storage.KeyType, Application.Storage.ValueType>) as Boolean {
+        var marker = cached["localSealed"];
+        if (marker instanceof Boolean) {
+            return marker;
+        }
+        return false;
     }
 
     // The same account list with every secret run through CacheBox one way or
@@ -143,7 +202,7 @@ class AccountStore {
     // readable is worse than none: the failure would surface later as a wrong
     // code rather than as a missing one.
     private function withSecrets(accounts as Array<Dictionary>, key as ByteArray,
-                                 iv as ByteArray, sealing as Boolean) as Array<Dictionary>? {
+                                 sealing as Boolean) as Array<Dictionary>? {
         var result = [] as Array<Dictionary>;
 
         for (var i = 0; i < accounts.size(); i++) {
@@ -153,9 +212,10 @@ class AccountStore {
                 return null;
             }
 
+            var label = labelOf(account);
             var changed = sealing
-                ? CacheBox.encrypt(secret, key, iv)
-                : CacheBox.decrypt(secret, key, iv);
+                ? CacheBox.seal(secret, label, key)
+                : CacheBox.open(secret, label, key);
             if (changed == null) {
                 return null;
             }
@@ -170,5 +230,19 @@ class AccountStore {
         }
 
         return result;
+    }
+
+    // What a cached secret belongs to, mixed into its tag so that a blob
+    // cannot be lifted from one account and read as another's seed. Length
+    // prefixed, so an issuer and a name cannot be re-cut to name a different
+    // pair.
+    private function labelOf(account as Dictionary) as String {
+        var issuer = text(account, "issuer");
+        return issuer.length().toString() + ":" + issuer + text(account, "name");
+    }
+
+    private function text(account as Dictionary, key as String) as String {
+        var value = account[key];
+        return value instanceof String ? value : "";
     }
 }
