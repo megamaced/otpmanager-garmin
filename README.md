@@ -9,7 +9,26 @@ code off your wrist.
 |---|---|---|
 | ![Account list](docs/screenshot-list.png) | ![Code](docs/screenshot-code.png) | ![PIN keypad](docs/screenshot-pin.png) |
 
-Supported devices: **Venu 3S**, **Venu 3**, **vívoactive 5**.
+Supported on **44 watches** across the Venu, vívoactive, Forerunner, fenix and
+epix families.
+
+> **A touch screen is required.** The PIN keypad is tap-only, so button-only
+> watches — the Instinct family, and the Forerunner 255 — are not supported. On
+> one of those you could sign in and read codes but never set a PIN, which is
+> not a version of this app worth shipping.
+
+<details>
+<summary>The full list</summary>
+
+| Family | Watches |
+|---|---|
+| epix | epix™ (Gen 2) / quatix® 7 Sapphire, epix™ Pro (Gen 2) 42mm, epix™ Pro (Gen 2) 47mm / quatix® 7 Pro, epix™ Pro (Gen 2) 51mm / D2™ Mach 1 Pro / tactix® 7 – AMOLED Edition |
+| fenix | fēnix® 7 / quatix® 7, fēnix® 7 Pro, fēnix® 7 Pro - Solar Edition (no Wi-Fi), fēnix® 7S, fēnix® 7S Pro, fēnix® 7X / tactix® 7 / quatix® 7X Solar / Enduro™ 2, fēnix® 7X Pro, fēnix® 7X Pro - Solar Edition (no Wi-Fi), fēnix® 8 43mm, fēnix® 8 47mm / 51mm / tactix® 8 47mm / 51mm / quatix® 8 47mm / 51mm, fēnix® 8 Pro 47mm / 51mm / MicroLED / quatix® 8 Pro 47mm / 51mm, fēnix® 8 Solar 47mm, fēnix® 8 Solar 51mm / tactix® 8 Solar 51mm, fēnix® 9 43mm, fēnix® 9 47mm / 51mm, fēnix® 9 Pro 43mm, fēnix® 9 Pro 47mm, fēnix® 9 Pro 51mm, fēnix® 9 Pro Solar 47mm, fēnix® 9 Pro Solar 51mm, fēnix® E |
+| Forerunner | Forerunner® 165, Forerunner® 165 Music, Forerunner® 170, Forerunner® 170 Music, Forerunner® 265, Forerunner® 265s, Forerunner® 570 42mm, Forerunner® 570 47mm, Forerunner® 70, Forerunner® 955 / Solar, Forerunner® 965, Forerunner® 970 |
+| Venu | Venu® 3, Venu® 3S, Venu® 4 41mm, Venu® 4 45mm / D2™ Air X15, Venu® X1 |
+| vívoactive | vívoactive® 5, vívoactive® 6 |
+
+</details>
 
 Codes are computed on the watch itself. The account list is cached, so the app
 opens instantly and keeps working with your phone out of range — only the
@@ -18,7 +37,7 @@ opens instantly and keeps working with your phone out of range — only the
 ## What you need
 
 - A Nextcloud server running the OTP Manager app, reachable over **HTTPS**.
-- One of the watches above.
+- One of the watches listed above.
 - The Connect IQ SDK. There is no public store listing, so you build the app
   and install it on your own watch. That is a twenty-minute job, once.
 
@@ -41,8 +60,9 @@ Both routes need the SDK and a signing key first.
 ### 1. SDK and signing key
 
 Get the SDK through Garmin's [SDK Manager](https://developer.garmin.com/connect-iq/sdk/),
-which needs a free Garmin account, and install the device profile for your watch
-(`venu3s`, `venu3` or `vivoactive5`).
+which needs a free Garmin account, and install the device profile for your watch.
+You only need the one you own — `./build.sh local` takes a device argument, and
+the default is `venu3s`.
 
 Every build is signed, even for sideloading. Any RSA key will do, as long as it
 stays the same across rebuilds:
@@ -82,7 +102,7 @@ Garmin account can see it.
 ```bash
 cp local.properties.example local.properties
 $EDITOR local.properties          # gitignored; never commit it
-./build.sh local
+./build.sh local fenix7s          # your device; defaults to venu3s
 ```
 
 `local.properties` holds the server URL, your Nextcloud user ID and app
@@ -95,8 +115,8 @@ so `cp` fails with `Operation not supported` — use `gio`:
 
 ```bash
 gio mount -l | grep mtp://          # find the device address
-gio copy build/otpmanager-venu3s.prg \
-    "mtp://<device>/Internal Storage/GARMIN/Apps/otpmanager-venu3s.prg"
+gio copy build/otpmanager-fenix7s.prg \
+    "mtp://<device>/Internal Storage/GARMIN/Apps/otpmanager-fenix7s.prg"
 ```
 
 The directory is `GARMIN/Apps` — check the capitalisation on the device rather
@@ -215,8 +235,8 @@ still encrypted, as the server sent them.
 ## Development
 
 ```bash
-./build.sh              # one signed .prg per device, into build/
-./build.sh local        # one .prg with local.properties compiled in
+./build.sh              # a signed .prg for a representative device per icon size
+./build.sh local [dev]  # one .prg with local.properties compiled in
 ./build.sh test         # unit tests, in the simulator
 ./build.sh export       # a .iq for the store
 ./build.sh beta         # a .iq for the store's Beta App slot

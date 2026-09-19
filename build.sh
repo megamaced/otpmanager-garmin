@@ -3,7 +3,8 @@
 # or packages the app for the store.
 #
 #   ./build.sh          build every device
-#   ./build.sh local    one .prg with local.properties compiled in
+#   ./build.sh local [device]
+#                       one .prg with local.properties compiled in
 #   ./build.sh test     build the unit-test binary and run it in the simulator
 #   ./build.sh export   a .iq for the store, under the production app id
 #   ./build.sh beta     a .iq for the store's Beta App slot, under BETA_APP_ID
@@ -14,7 +15,11 @@ set -euo pipefail
 
 SDK=$(cat ~/.Garmin/ConnectIQ/current-sdk.cfg)
 KEY=${DEVELOPER_KEY:-$HOME/.Garmin/keys/developer_key.der}
-DEVICES=(venu3s venu3 vivoactive5)
+# A representative device per launcher-icon size, plus the screen extremes:
+# 240 px round through 466 px round and the one rectangular watch. Building
+# all 44 takes minutes and tells you nothing more — every device shares the
+# same source, and only the icon mapping differs. `export` builds the lot.
+DEVICES=(fenix7s vivoactive6 vivoactive5 epix2 venu3s venu445mm fenix9pro51mm venux1)
 
 # A beta upload has to carry a different app id from the production one, so that
 # the store treats it as a separate listing. Not a secret, and not the signing
@@ -37,11 +42,19 @@ local)
     # Sideloaded apps get no settings UI from Garmin, so a personal build bakes
     # the values from local.properties in as defaults. With a `pin` set they are
     # sealed first, and the .prg carries ciphertext rather than credentials.
+    # Only the watch in hand needs building, and it is rarely the default one:
+    # the app supports 44 devices and nobody sideloads to all of them.
+    device=${2:-venu3s}
+    if [ ! -d "$HOME/.Garmin/ConnectIQ/Devices/$device" ]; then
+        echo "no device profile for '$device' — download it in the SDK Manager" >&2
+        exit 1
+    fi
+
     restore_on_exit resources/properties.xml
     python3 tools/bake-properties.py
-    "$SDK/bin/monkeyc" -f monkey.jungle -o build/otpmanager-venu3s.prg \
-        -y "$KEY" -d venu3s -w -l 3
-    echo "built build/otpmanager-venu3s.prg with local.properties baked in"
+    "$SDK/bin/monkeyc" -f monkey.jungle -o "build/otpmanager-$device.prg" \
+        -y "$KEY" -d "$device" -w -l 3
+    echo "built build/otpmanager-$device.prg with local.properties baked in"
     ;;
 
 test)
@@ -75,7 +88,7 @@ beta)
     ;;
 
 *)
-    echo "usage: $0 [local|test|export|beta]" >&2
+    echo "usage: $0 [local [device]|test|export|beta]" >&2
     exit 1
     ;;
 esac
