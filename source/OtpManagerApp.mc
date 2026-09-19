@@ -22,6 +22,13 @@ class OtpManagerApp extends Application.AppBase {
     // callback cannot land on top of something the wearer has navigated to.
     private var _refreshing as Boolean = false;
 
+    // A sign-in waiting on the phone. Polling outlives any view, so leaving the
+    // screen has to cancel it rather than let it report into a later one.
+    private var _login as NcLogin?;
+
+    // Why the last sign-in did not finish, shown under the row that retries it.
+    private var _loginError as String?;
+
     // The salt and IV a pending seal will use. Decided once, because the key
     // the wearer is about to derive is only good for the salt it came from.
     private var _sealSalt as ByteArray = []b;
@@ -43,14 +50,8 @@ class OtpManagerApp extends Application.AppBase {
     // model is rebuilt, and the screen has to follow it — otherwise a menu, or
     // a code, from the previous configuration stays on display.
     function onSettingsChanged() as Void {
-        _generation++;
-        _refreshing = false;
-        _config = new Config();
-        _sealSalt = []b;
-        resumeUnlock();
-        _store = new AccountStore(_config);
-        _api = new OtpManagerApi(_config, _generation);
-
+        cancelSignIn();
+        rebuild();
         showFromState();
     }
 
@@ -73,6 +74,7 @@ class OtpManagerApp extends Application.AppBase {
         if (_refreshing || !_store.isLoaded()) {
             return false;
         }
+        cancelSignIn();
         showList();
         return true;
     }
@@ -102,24 +104,102 @@ class OtpManagerApp extends Application.AppBase {
         showList();
     }
 
-    private function beginRefresh() as Void {
-        _refreshing = true;
-        _api.refresh(method(:onRefresh));
+    // Nextcloud's Login Flow v2, which is what replaced typing a sixty-
+    // character app password into a phone. See NcLogin for why it is that and
+    // not an OAuth exchange.
+    function signIn() as Void {
+        if (_login != null) {
+            return;
+        }
+
+        _loginError = null;
+        var view = status(Rez.Strings.SignInWaiting);
+        WatchUi.switchToView(view, new StatusDelegate(), WatchUi.SLIDE_IMMEDIATE);
+
+        var login = new NcLogin(_config.serverUrl);
+        _login = login;
+        login.begin(method(:onSignedIn));
     }
 
-    private function showList() as Void {
-        WatchUi.switchToView(buildMenu(), new AccountMenuDelegate(), WatchUi.SLIDE_IMMEDIATE);
+    function onSignedIn(result as NcLogin.Result, credentials as SignIn?) as Void {
+        if (_login == null) {
+            return;
+        }
+        _login = null;
+
+        if (result != NcLogin.LOGIN_OK || credentials == null) {
+            _loginError = explainLogin(result);
+            WatchUi.switchToView(buildSignInMenu(), new AccountMenuDelegate(false),
+                WatchUi.SLIDE_IMMEDIATE);
+            return;
+        }
+
+        // Written before the PIN is offered rather than after it is chosen. The
+        // web sign-in is the slow part and should not have to be repeated
+        // because the wearer put the watch down at the keypad; what this costs
+        // is a plaintext app password in watch storage until a PIN replaces it,
+        // which is exactly what a build with no PIN keeps there anyway.
+        CredentialStore.storeSignIn(credentials.username, credentials.appPassword);
+        rebuild();
+
+        // Nothing to seal until the vault password is there too, and offering a
+        // PIN that cannot be applied yet is a dead end. The state screen says
+        // what is missing, and Options offers the PIN once it is not.
+        if (!_config.isComplete()) {
+            showFromState();
+            return;
+        }
+
+        WatchUi.switchToView(buildPinChoiceMenu(), new AccountMenuDelegate(false),
+            WatchUi.SLIDE_IMMEDIATE);
+    }
+
+    function beginPinSetup() as Void {
+        _sealSalt = Sealed.salt();
+        _sealIv = Sealed.iv();
+
+        var view = new PinView(0, Sealed.ITERATIONS, _sealSalt, true);
+        WatchUi.switchToView(view, new PinDelegate(view), WatchUi.SLIDE_IMMEDIATE);
+    }
+
+    // Back from the keypad. Nothing has been sealed, so the credentials are
+    // where they were and the app carries on without a PIN.
+    function cancelPinSetup() as Boolean {
+        _sealSalt = []b;
+        showFromState();
+        return true;
+    }
+
+    function keepNoPin() as Void {
+        showFromState();
+    }
+
+    // A new PIN, typed twice and turned into a key. Sealing here is what takes
+    // the app password out of watch storage and the vault password out of the
+    // settings screen; from this point neither exists anywhere in the clear.
+    function onPinChosen(typed as String, key as ByteArray) as Boolean {
+        var credentials = _config.credentials();
+        if (!credentials.isComplete() || !Sealed.isPin(typed)) {
+            return false;
+        }
+
+        var blob = Sealed.sealWithKey(credentials, typed.length(), _sealSalt, _sealIv, key);
+        if (blob == null) {
+            return false;
+        }
+
+        CredentialStore.storeSeal(blob);
+        _config.clearPendingOtpPassword();
+        PinLock.remember(key);
+
+        showFromState();
+        return true;
     }
 
     // A PIN entered on the keypad, with the key derived from it. Returns false
     // for a wrong one, which is the only answer the keypad needs: on success
     // the view is replaced here.
     function onPinEntered(typed as String, key as ByteArray) as Boolean {
-        var pending = _config.pendingPin();
-        if (!pending.equals("")) {
-            return applySeal(typed, pending, key);
-        }
-
         var blob = _config.sealedBlob();
         if (blob == null) {
             return false;
@@ -130,8 +210,10 @@ class OtpManagerApp extends Application.AppBase {
             return false;
         }
 
+        credentials = applyPendingOtpPassword(blob, credentials as Credentials, key);
+
         PinLock.remember(key);
-        _config.unlock(credentials);
+        _config.unlock(credentials as Credentials);
         _store = new AccountStore(_config);
         _api = new OtpManagerApi(_config, _generation);
 
@@ -139,25 +221,74 @@ class OtpManagerApp extends Application.AppBase {
         return true;
     }
 
-    // The first launch after a PIN was set in Garmin Connect. The wearer types
-    // it again here, which is what makes replacing the plaintext safe — and
-    // there is no blob to try the key against yet, so the digits are compared.
-    private function applySeal(typed as String, pending as String, key as ByteArray) as Boolean {
-        if (!typed.equals(pending)) {
-            return false;
-        }
+    function showOptions() as Void {
+        WatchUi.switchToView(buildOptionsMenu(), new AccountMenuDelegate(true),
+            WatchUi.SLIDE_LEFT);
+    }
 
-        var blob = Sealed.sealWithKey(_config.appPassword, _config.otpPassword,
-            pending.length(), _sealSalt, _sealIv, key);
-        if (blob == null) {
-            return false;
-        }
+    // Forgets the app password rather than revoking it: only Nextcloud can do
+    // that, under Settings, Security, Devices & sessions — which is worth doing
+    // as well if the reason for signing out is that the watch was lost.
+    function signOut() as Void {
+        cancelSignIn();
+        CredentialStore.clear();
+        PinLock.forget();
+        AccountStore.clearCache();
 
-        _config.completeSeal(blob);
-        PinLock.remember(key);
-
+        _loginError = null;
+        rebuild();
         showFromState();
-        return true;
+    }
+
+    // A vault password typed into the settings screen while a seal already held
+    // one. Re-sealed under the same PIN — the salt is the blob's, so the key
+    // just derived still opens it — and cleared from the settings screen again.
+    private function applyPendingOtpPassword(blob as SealedBlob, credentials as Credentials, key as ByteArray) as Credentials {
+        var pending = _config.pendingOtpPassword();
+        if (pending.equals("")) {
+            return credentials;
+        }
+
+        if (!pending.equals(credentials.otpPassword)) {
+            var updated = new Credentials(credentials.username, credentials.appPassword, pending);
+            var resealed = Sealed.sealWithKey(updated, blob.pinLength, blob.salt, Sealed.iv(), key);
+            if (resealed == null) {
+                return credentials;
+            }
+
+            CredentialStore.storeSeal(resealed);
+            credentials = updated;
+        }
+
+        _config.clearPendingOtpPassword();
+        return credentials;
+    }
+
+    private function cancelSignIn() as Void {
+        var login = _login;
+        if (login != null) {
+            login.cancel();
+            _login = null;
+        }
+    }
+
+    private function rebuild() as Void {
+        _generation++;
+        _refreshing = false;
+        _config = new Config();
+        _sealSalt = []b;
+        resumeUnlock();
+        _store = new AccountStore(_config);
+        _api = new OtpManagerApi(_config, _generation);
+    }
+
+    private function beginRefresh() as Void {
+        _refreshing = true;
+        _api.refresh(method(:onRefresh));
+    }
+
+    private function showList() as Void {
+        WatchUi.switchToView(buildMenu(), new AccountMenuDelegate(false), WatchUi.SLIDE_IMMEDIATE);
     }
 
     private function showFromState() as Void {
@@ -194,52 +325,42 @@ class OtpManagerApp extends Application.AppBase {
         if (!_config.isSecure()) {
             return [status(Rez.Strings.InsecureUrl), new StatusDelegate()];
         }
-        // A PIN waiting to be applied comes first: until it is, the passwords
-        // it is meant to protect are sitting in the properties in the clear.
-        var pending = _config.pendingPin();
-        if (!pending.equals("")) {
-            if (!_config.canSeal()) {
-                return [status(Rez.Strings.BadPin), new StatusDelegate()];
-            }
-            if (_sealSalt.size() == 0) {
-                _sealSalt = Sealed.salt();
-                _sealIv = Sealed.iv();
-            }
-            return keypad(pending.length(), Sealed.ITERATIONS, _sealSalt);
-        }
 
         // Sealed and not yet opened: nothing else can be reached from here, and
         // the credentials are not in memory to be reached with.
         var blob = _config.sealedBlob();
         if (blob != null && !_config.isComplete()) {
-            return keypad(blob.pinLength, blob.iterations, blob.salt);
+            var view = new PinView(blob.pinLength, blob.iterations, blob.salt, false);
+            return [view, new PinDelegate(view)];
+        }
+
+        // A seal that will not parse is one made by an older version of this
+        // app, before the login name was part of it. Signing in again is the
+        // migration, and it is two taps.
+        if (!_config.hasCredentials()) {
+            return [buildSignInMenu(), new AccountMenuDelegate(false)];
         }
 
         if (!_config.isComplete()) {
-            return [status(Rez.Strings.NotConfigured), new StatusDelegate()];
+            return [status(Rez.Strings.NeedOtpPassword), new StatusDelegate()];
         }
 
         // A cached list opens instantly and works with no phone nearby; the
         // Refresh row is there for when accounts have actually changed. An
         // empty vault is a loaded state too, and must not re-fetch every launch.
         if (_store.isLoaded()) {
-            return [buildMenu(), new AccountMenuDelegate()];
+            return [buildMenu(), new AccountMenuDelegate(false)];
         }
 
-        var view = status(Rez.Strings.Loading);
+        var loading = status(Rez.Strings.Loading);
         beginRefresh();
-        return [view, new StatusDelegate()];
-    }
-
-    private function keypad(pinLength as Number, iterations as Number, salt as ByteArray) as [WatchUi.Views, WatchUi.InputDelegates] {
-        var view = new PinView(pinLength, iterations, salt);
-        return [view, new PinDelegate(view)];
+        return [loading, new StatusDelegate()];
     }
 
     // No title: on a round screen a title band costs a whole list row, and the
     // launcher already said which app this is.
     private function buildMenu() as WatchUi.CustomMenu {
-        var menu = new AccountMenu(System.getDeviceSettings().screenHeight / 4);
+        var menu = newMenu();
         var accounts = _store.getAccounts();
 
         for (var i = 0; i < accounts.size(); i++) {
@@ -253,14 +374,47 @@ class OtpManagerApp extends Application.AppBase {
 
         // Without this the empty vault is a lone Refresh row with no explanation.
         if (_store.isEmpty()) {
-            menu.addItem(new AccountMenuItem(
-                :none, WatchUi.loadResource(Rez.Strings.NoAccountsRow) as String, null));
+            menu.addItem(new AccountMenuItem(:none, text(Rez.Strings.NoAccountsRow), null));
         }
 
-        menu.addItem(new AccountMenuItem(
-            :refresh, WatchUi.loadResource(Rez.Strings.Refresh) as String, null));
+        menu.addItem(new AccountMenuItem(:refresh, text(Rez.Strings.Refresh), null));
+        menu.addItem(new AccountMenuItem(:options, text(Rez.Strings.Options), null));
 
         return menu;
+    }
+
+    private function buildSignInMenu() as WatchUi.CustomMenu {
+        var menu = newMenu();
+        menu.addItem(new AccountMenuItem(:signIn, text(Rez.Strings.SignIn),
+            _loginError != null ? _loginError : text(Rez.Strings.SignInSubtitle)));
+        return menu;
+    }
+
+    // Offered once, straight after signing in. Declining is a real answer, so
+    // it is a row of its own rather than something to guess at with Back.
+    private function buildPinChoiceMenu() as WatchUi.CustomMenu {
+        var menu = newMenu();
+        menu.addItem(new AccountMenuItem(:setPin, text(Rez.Strings.PinSet),
+            text(Rez.Strings.PinSetSubtitle)));
+        menu.addItem(new AccountMenuItem(:noPin, text(Rez.Strings.PinSkip),
+            text(Rez.Strings.PinSkipSubtitle)));
+        return menu;
+    }
+
+    private function buildOptionsMenu() as WatchUi.CustomMenu {
+        var menu = newMenu();
+        menu.addItem(new AccountMenuItem(:setPin,
+            text(_config.isSealed() ? Rez.Strings.PinChange : Rez.Strings.PinSet), null));
+        menu.addItem(new AccountMenuItem(:signOut, text(Rez.Strings.SignOut), null));
+        return menu;
+    }
+
+    private function newMenu() as AccountMenu {
+        return new AccountMenu(System.getDeviceSettings().screenHeight / 4);
+    }
+
+    private function text(resource as ResourceId) as String {
+        return WatchUi.loadResource(resource) as String;
     }
 
     // The status view is only on screen when a refresh was started from it.
@@ -272,21 +426,31 @@ class OtpManagerApp extends Application.AppBase {
     }
 
     private function status(resource as ResourceId) as StatusView {
-        _statusView = new StatusView(WatchUi.loadResource(resource) as String);
+        _statusView = new StatusView(text(resource));
         return _statusView;
     }
 
     private function explain(result as OtpManagerApi.Result, message as String?) as String {
         if (result == OtpManagerApi.RESULT_NOT_CONFIGURED) {
-            return WatchUi.loadResource(Rez.Strings.NotConfigured) as String;
+            return text(Rez.Strings.NotConfigured);
         }
         if (result == OtpManagerApi.RESULT_AUTH_FAILED) {
-            return WatchUi.loadResource(Rez.Strings.AuthFailed) as String;
+            return text(Rez.Strings.AuthFailed);
         }
         if (result == OtpManagerApi.RESULT_BAD_OTP_PASSWORD) {
-            return WatchUi.loadResource(Rez.Strings.DecryptFailed) as String;
+            return text(Rez.Strings.DecryptFailed);
         }
-        return message != null ? message : WatchUi.loadResource(Rez.Strings.Unreachable) as String;
+        return message != null ? message : text(Rez.Strings.Unreachable);
+    }
+
+    private function explainLogin(result as NcLogin.Result) as String {
+        if (result == NcLogin.LOGIN_NO_PHONE) {
+            return text(Rez.Strings.NoPhone);
+        }
+        if (result == NcLogin.LOGIN_TIMED_OUT) {
+            return text(Rez.Strings.SignInTimedOut);
+        }
+        return text(Rez.Strings.SignInFailed);
     }
 }
 

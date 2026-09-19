@@ -24,6 +24,12 @@ Secrets are decrypted on the watch, exactly as the web client does it:
 AES-256-CBC, keyed on `SHA-256(your OTP Manager password)`, with the IV from
 step 2. Codes are then generated per RFC 6238.
 
+You never type that app password. The watch asks Nextcloud for one of its own
+with [Login Flow v2](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/LoginFlow/index.html):
+it opens the Nextcloud login page on your phone, you sign in there — SSO, 2FA
+and all — and the watch polls until Nextcloud hands back a fresh app password,
+revocable on its own under **Settings → Security → Devices & sessions**.
+
 The account list is cached on the watch, so the app opens instantly and keeps
 working with no phone nearby. Only the **Refresh** entry at the bottom of the
 list goes back to the server — launching the app does not.
@@ -81,6 +87,10 @@ $EDITOR local.properties          # gitignored; never commit it
 | `appPassword` | Nextcloud → **Settings → Security → Devices & sessions** |
 | `otpPassword` | your OTP Manager vault password |
 | `pin` | optional, 4–8 digits — see [Locking the app](#locking-the-app-with-a-pin) |
+
+This is the sideload route, where the whole configuration has to be compiled in.
+A store or beta install types only two of these — the URL and the vault
+password — and signs in for the rest.
 
 Use a Nextcloud **app password**, not your login password — it can be revoked on
 its own and it sidesteps two-factor prompts.
@@ -190,6 +200,43 @@ there is something to release.
 Only your own Garmin account can see or install it — there is no way to invite
 other testers from the developer dashboard.
 
+### Setting it up on the watch
+
+A store or beta install is configured in two places, and only the first of them
+is a keyboard.
+
+In Garmin Connect, under the app's settings:
+
+| Setting | What it is |
+|---|---|
+| Nextcloud URL | e.g. `https://cloud.example.com` — must be `https://` |
+| OTP Manager password | your vault password |
+
+The vault password has to be typed because nothing can tell the watch what it
+is: it is the key your secrets are encrypted under, and the server has never
+seen it either.
+
+Then, on the watch:
+
+1. **Sign in** — the watch asks Nextcloud to start a login, and a notification
+   appears on your phone. Tap it, sign in in the web view that opens, and grant
+   access. The watch is polling while you do, and moves on by itself; it gives
+   up after five minutes, and the row that started it will say so.
+2. **Set a PIN**, or **Not now** — offered once, straight after signing in, and
+   available afterwards under **Options**.
+
+Nothing else is typed. The login name and the app password come back from
+Nextcloud and go straight into the watch's own storage, which — unlike the
+settings behind Garmin Connect — does not sync anywhere.
+
+**Options** on the account list also has **Sign out**, which forgets the
+credentials and the cached accounts and returns to the sign-in screen. It does
+not revoke anything: the app password stays valid until you remove it in
+Nextcloud, which is the thing to do if the watch itself is gone.
+
+To change the vault password later, type the new one into the settings screen.
+The next unlock re-seals under it and blanks the field again.
+
 ## Locking the app with a PIN
 
 Set a 4 to 8 digit PIN and the app follows the same rule Garmin Pay uses for its
@@ -220,13 +267,17 @@ Setting a PIN also encrypts both passwords rather than just hiding the screen
 behind them. They are sealed into one AES-256-CBC blob keyed on the PIN, and
 nothing else on the watch holds them.
 
-On a sideload `tools/seal.py` does this at build time, so the `.prg` never
-contains plaintext. On a store or beta build there is a moment where it does —
-Garmin Connect has nowhere else to put what you type — so the app gets out of
-that state on its next launch: it shows the keypad, you retype the PIN you just
-set, and only once those match does it write the seal and blank all three fields
-in Garmin Connect. Typing it on the watch is the point. A typo in Garmin Connect
-would otherwise take the only copy of your credentials with it.
+The PIN is chosen on the watch, on the same keypad that afterwards asks for it —
+straight after signing in, or later under **Options**. You type it twice, with
+the ✓ key that appears on the keypad while a PIN is being chosen: the length is
+fixed once it is set, so unlocking needs no confirm key, but choosing one does.
+Only when both entries match is anything sealed.
+
+It is never typed into Garmin Connect and there is no setting for it. Sealing
+takes the app password out of the watch's storage and the vault password off the
+settings screen in the same moment, so from then on the blob is the only copy of
+either. On a sideload `tools/seal.py` does the same thing at build time, from
+the `pin` in `local.properties`, and the plaintext never reaches the build.
 
 **Be clear about what that buys.** Against someone who picks up your watch, it
 is the real thing: they get a keypad and nothing else. Against someone who gets
@@ -277,15 +328,20 @@ holds everything needed to do that.
 
 **Without a PIN**, that is as direct as it sounds:
 
-- The Nextcloud app password and the vault password are stored in Connect IQ
-  application properties, in the clear. The settings fields are masked when you
-  type them, but Connect IQ has no encrypted storage to put them in.
+- The Nextcloud app password is held in the watch's own storage, in the clear.
+  It never passes through Garmin Connect, but Connect IQ has no encrypted
+  storage to put it in either.
+- The vault password sits in Connect IQ application properties, in the clear,
+  because that is where the settings screen you typed it into keeps it. Masked
+  on entry, and synced to your phone like any other setting.
 - The cached account list holds secrets exactly as the server sent them, still
   encrypted — but the key is derived from a password sitting next to it.
 
 Treat the watch as you would an unlocked authenticator app. If you lose it,
-revoke the Nextcloud app password; that cuts off refreshes, though a cached
-list will still generate codes until the app is deleted.
+revoke the Nextcloud app password in **Settings → Security → Devices &
+sessions**; that cuts off refreshes, though a cached list will still generate
+codes until the app is deleted. Signing out on the watch clears the credentials
+and the cache but revokes nothing, so it is not a substitute.
 
 **With a PIN**, neither password is stored anywhere in the clear, and a watch
 that has been off your wrist shows a keypad rather than your codes. That defeats
@@ -312,7 +368,8 @@ this app's, and this app is deliberately bug-compatible with it.
 
 The tests cover base32 decoding, the RFC 6238 vectors for SHA-1 and SHA-256,
 AES decryption against a ciphertext produced the way the server produces one,
-and the lock rule. They run on the device VM, not on a host reimplementation.
+the sealed blob format, what a sign-in response has to contain, and the lock
+rule. They run on the device VM, not on a host reimplementation.
 
 Two of them are worth knowing about. One opens a sealed blob produced by
 `tools/seal.py`, so the watch and the build-time sealer are checked against each

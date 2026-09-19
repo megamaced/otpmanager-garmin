@@ -8,6 +8,11 @@ import Toybox.WatchUi;
 // what was typed. Laid out in fractions of the screen so the same code fits a
 // 390 and a 454 pixel round display, and drawn without ever setting a clip
 // region — see the SDK notes for what a leaked clip does to the next view.
+//
+// It does two jobs. Unlocking knows the length from the blob header, so the
+// last digit is the only signal it needs and there is no confirm key. Choosing
+// a new PIN knows nothing, so it has one: the dead bottom-left cell, which on
+// the unlock screen is a corner nobody can reach anyway.
 class PinView extends WatchUi.View {
 
     // The bottom row's outer corners fall outside the glass on a round display.
@@ -20,6 +25,7 @@ class PinView extends WatchUi.View {
     private const GRID_RIGHT = 0.855;
 
     private const BACKSPACE = -1;
+    private const CONFIRM = -2;
 
     // Rounds of SHA-256 per tick. Small enough that no single block of
     // computation can trip the watchdog, large enough to finish the whole
@@ -29,31 +35,46 @@ class PinView extends WatchUi.View {
 
     // Everything the keypad needs to turn digits into a key, and nothing about
     // what the key is then for: the same screen unlocks an existing seal and
-    // confirms a new one.
+    // creates a new one.
     private var _pinLength as Number;
     private var _iterations as Number;
     private var _salt as ByteArray;
+    private var _setting as Boolean;
 
     private var _width as Number;
     private var _height as Number;
 
     private var _entered as String = "";
-    private var _failed as Boolean = false;
+
+    // The first of the two entries a new PIN is typed as. Null while the first
+    // one is still being typed, which is also what the prompt is chosen on.
+    private var _first as String? = null;
+
+    // Shown in red, and cleared by the next key. Null the rest of the time.
+    private var _notice as String? = null;
 
     // Non-null only while a key is being derived, which is also the window in
     // which the keypad ignores taps.
     private var _derivation as KeyDerivation?;
     private var _timer as Timer.Timer?;
 
-    function initialize(pinLength as Number, iterations as Number, salt as ByteArray) {
+    function initialize(pinLength as Number, iterations as Number, salt as ByteArray,
+                        setting as Boolean) {
         View.initialize();
         _pinLength = pinLength;
         _iterations = iterations;
         _salt = salt;
+        _setting = setting;
 
         var settings = System.getDeviceSettings();
         _width = settings.screenWidth;
         _height = settings.screenHeight;
+    }
+
+    // Back means different things on the two screens, and only the view knows
+    // which one this is.
+    function isSetting() as Boolean {
+        return _setting;
     }
 
     // Called by PinDelegate, which has the touch events but none of the layout.
@@ -73,6 +94,7 @@ class PinView extends WatchUi.View {
         stop();
         _derivation = null;
         _entered = "";
+        _first = null;
     }
 
     function onTick() as Void {
@@ -92,13 +114,21 @@ class PinView extends WatchUi.View {
 
         // On success the app switches the view out from under this one, so
         // there is nothing left to draw. The digits are carried through to
-        // here because confirming a new PIN compares them, rather than trying
-        // a key against a blob that does not exist yet.
+        // here because a new PIN has no blob to try the key against: what
+        // proves it right is that it was typed the same way twice.
         var typed = _entered;
         _entered = "";
+        _first = null;
+
+        if (_setting) {
+            if (!getApp().onPinChosen(typed, derivation.key())) {
+                fail(Rez.Strings.PinNotSaved);
+            }
+            return;
+        }
+
         if (!getApp().onPinEntered(typed, derivation.key())) {
-            _failed = true;
-            WatchUi.requestUpdate();
+            fail(Rez.Strings.WrongPin);
         }
     }
 
@@ -112,34 +142,77 @@ class PinView extends WatchUi.View {
             return;
         }
 
-        if (_failed) {
-            dc.setColor(Graphics.COLOR_RED, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_width / 2, (_height * MESSAGE_Y).toNumber(), Graphics.FONT_XTINY,
-                WatchUi.loadResource(Rez.Strings.WrongPin) as String,
-                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        }
-
+        drawMessage(dc);
         drawDots(dc);
         drawKeypad(dc);
     }
 
     private function press(cell as Number) as Void {
-        _failed = false;
+        _notice = null;
+
+        if (cell == CONFIRM) {
+            confirm();
+            WatchUi.requestUpdate();
+            return;
+        }
 
         if (cell == BACKSPACE) {
             if (_entered.length() > 0) {
                 _entered = _entered.substring(0, _entered.length() - 1) as String;
             }
-        } else if (_entered.length() < _pinLength) {
+        } else if (_entered.length() < maxDigits()) {
             _entered += cell.toString();
         }
 
-        // No confirm key: the length is known before a digit is typed, so the
-        // last one is the only signal needed.
-        if (_entered.length() == _pinLength) {
+        // No confirm key when unlocking: the length is known before a digit is
+        // typed, so the last one is the only signal needed.
+        if (!_setting && _entered.length() == _pinLength) {
             begin();
         }
         WatchUi.requestUpdate();
+    }
+
+    // Typed twice, and compared before anything is derived — a PIN that seals
+    // the only copy of a credential is not one to accept on a single attempt.
+    private function confirm() as Void {
+        if (!Sealed.isPin(_entered)) {
+            _notice = WatchUi.loadResource(Rez.Strings.PinLength) as String;
+            return;
+        }
+
+        var first = _first;
+        if (first == null) {
+            _first = _entered;
+            _entered = "";
+            return;
+        }
+
+        if (!first.equals(_entered)) {
+            _first = null;
+            _entered = "";
+            _notice = WatchUi.loadResource(Rez.Strings.PinMismatch) as String;
+            return;
+        }
+
+        begin();
+    }
+
+    private function fail(resource as ResourceId) as Void {
+        _notice = WatchUi.loadResource(resource) as String;
+        WatchUi.requestUpdate();
+    }
+
+    private function maxDigits() as Number {
+        return _setting ? Sealed.MAX_PIN : _pinLength;
+    }
+
+    // How many dots to draw. A new PIN has no fixed length, so the row grows
+    // past the minimum as digits are added.
+    private function dotCount() as Number {
+        if (!_setting) {
+            return _pinLength;
+        }
+        return _entered.length() > Sealed.MIN_PIN ? _entered.length() : Sealed.MIN_PIN;
     }
 
     private function begin() as Void {
@@ -158,7 +231,8 @@ class PinView extends WatchUi.View {
         }
     }
 
-    // Null for a tap that missed every key, including the blank bottom-left.
+    // Null for a tap that missed every key — including the bottom-left cell,
+    // which is only a key while a PIN is being chosen.
     private function cellAt(x as Number, y as Number) as Number? {
         var left = (_width * GRID_LEFT).toNumber();
         var right = (_width * GRID_RIGHT).toNumber();
@@ -176,23 +250,41 @@ class PinView extends WatchUi.View {
             return row * 3 + column + 1;
         }
         if (column == 0) {
-            return null;
+            return _setting ? CONFIRM : null;
         }
         return column == 1 ? 0 : BACKSPACE;
     }
 
+    private function drawMessage(dc as Graphics.Dc) as Void {
+        var notice = _notice;
+        var text = notice;
+        if (text == null) {
+            if (!_setting) {
+                return;
+            }
+            text = WatchUi.loadResource(
+                _first == null ? Rez.Strings.PinChoose : Rez.Strings.PinRepeat) as String;
+        }
+
+        dc.setColor(notice != null ? Graphics.COLOR_RED : Graphics.COLOR_LT_GRAY,
+            Graphics.COLOR_TRANSPARENT);
+        dc.drawText(_width / 2, (_height * MESSAGE_Y).toNumber(), Graphics.FONT_XTINY, text,
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
     private function drawDots(dc as Graphics.Dc) as Void {
+        var count = dotCount();
         var spacing = _width / 14;
         var radius = spacing / 4;
         var y = (_height * DOTS_Y).toNumber();
-        var x = _width / 2 - ((_pinLength - 1) * spacing) / 2;
+        var x = _width / 2 - ((count - 1) * spacing) / 2;
 
-        for (var i = 0; i < _pinLength; i++) {
+        for (var i = 0; i < count; i++) {
             if (i < _entered.length()) {
                 dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
                 dc.fillCircle(x + i * spacing, y, radius);
             } else {
-                dc.setColor(_failed ? Graphics.COLOR_RED : Graphics.COLOR_DK_GRAY,
+                dc.setColor(_notice != null ? Graphics.COLOR_RED : Graphics.COLOR_DK_GRAY,
                     Graphics.COLOR_TRANSPARENT);
                 dc.drawCircle(x + i * spacing, y, radius);
             }
@@ -214,6 +306,10 @@ class PinView extends WatchUi.View {
 
         drawBackspace(dc, left + 2 * cellWidth + cellWidth / 2,
             top + 3 * cellHeight + cellHeight / 2, cellWidth);
+
+        if (_setting) {
+            drawTick(dc, left + cellWidth / 2, top + 3 * cellHeight + cellHeight / 2, cellWidth);
+        }
     }
 
     private function key(dc as Graphics.Dc, left as Number, top as Number, cellWidth as Number,
@@ -233,6 +329,18 @@ class PinView extends WatchUi.View {
             [x - size, y + size]
         ] as Array<Graphics.Point2D>);
         dc.fillRectangle(x - size, y - size / 2, 2 * size, size);
+    }
+
+    // Two strokes rather than a checkmark glyph, for the same reason. The pen
+    // width is put back: it is state on a context this view does not own.
+    private function drawTick(dc as Graphics.Dc, x as Number, y as Number, width as Number) as Void {
+        var size = width / 6;
+        dc.setColor(Graphics.COLOR_GREEN, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(4);
+        dc.drawLine(x - size, y, x - size / 3, y + size);
+        dc.drawLine(x - size / 3, y + size, x + size, y - size);
+        dc.setPenWidth(1);
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
     }
 
     private function drawProgress(dc as Graphics.Dc, fraction as Float) as Void {

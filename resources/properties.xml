@@ -1,14 +1,19 @@
 <resources>
     <properties>
         <property id="serverUrl" type="string"></property>
+        <property id="otpPassword" type="string"></property>
+
+        <!-- Filled in by signing in, not by typing. They have no settings entry
+             because there is nothing here worth typing: the login name and the
+             app password both come back from Nextcloud's login flow, and the
+             app keeps its copy in watch storage rather than here. What remains
+             is the channel tools/bake-properties.py uses to configure a
+             sideload, which has no settings screen at all. -->
         <property id="username" type="string"></property>
         <property id="appPassword" type="string"></property>
-        <property id="otpPassword" type="string"></property>
-        <property id="pin" type="string"></property>
 
-        <!-- Both passwords, encrypted under the PIN. Written by the app once
-             the PIN has been set, or compiled in by tools/bake-properties.py.
-             No settings entry: there is nothing here anyone can usefully type. -->
+        <!-- Every credential, encrypted under the PIN. Written by the app when
+             a PIN is set, or compiled in by tools/bake-properties.py. -->
         <property id="sealed" type="string"></property>
     </properties>
 
@@ -16,17 +21,8 @@
         <setting propertyKey="@Properties.serverUrl" title="@Strings.SettingServerUrl" prompt="https://cloud.example.com">
             <settingConfig type="url"/>
         </setting>
-        <setting propertyKey="@Properties.username" title="@Strings.SettingUsername">
-            <settingConfig type="alphaNumeric" maxLength="64"/>
-        </setting>
-        <setting propertyKey="@Properties.appPassword" title="@Strings.SettingAppPassword">
+        <setting propertyKey="@Properties.otpPassword" title="@Strings.SettingOtpPassword" prompt="@Strings.SettingOtpPasswordPrompt">
             <settingConfig type="password" maxLength="128"/>
-        </setting>
-        <setting propertyKey="@Properties.otpPassword" title="@Strings.SettingOtpPassword">
-            <settingConfig type="password" maxLength="128"/>
-        </setting>
-        <setting propertyKey="@Properties.pin" title="@Strings.SettingPin" prompt="@Strings.SettingPinPrompt">
-            <settingConfig type="password" maxLength="8"/>
         </setting>
     </settings>
 </resources>

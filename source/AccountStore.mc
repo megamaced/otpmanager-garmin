@@ -6,7 +6,14 @@ import Toybox.Lang;
 // exactly as the server sent them: encrypted, when the vault has a password.
 class AccountStore {
 
-    private const STORAGE_KEY = "vault";
+    private static const STORAGE_KEY = "vault";
+
+    // Signing out drops the cache with everything else. The secrets in it are
+    // still encrypted, but they belong to an account the watch no longer has
+    // credentials for.
+    static function clearCache() as Void {
+        Application.Storage.deleteValue(STORAGE_KEY);
+    }
 
     private var _config as Config;
     private var _accounts as Array<Dictionary> = [] as Array<Dictionary>;

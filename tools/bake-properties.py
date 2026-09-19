@@ -16,7 +16,7 @@ import sys
 import seal
 
 PROPERTIES = pathlib.Path("resources/properties.xml")
-SEALED = ("appPassword", "otpPassword", "pin")
+SEALED = ("username", "appPassword", "otpPassword")
 
 
 def read(path: pathlib.Path) -> dict[str, str]:
@@ -37,14 +37,18 @@ def main() -> int:
         return 1
 
     values = read(local)
-    pin = values.get("pin", "")
+
+    # The PIN itself is not a property: nothing on the watch reads one, and a
+    # build that seals has no reason to carry the key to its own blob.
+    pin = values.pop("pin", "")
 
     if pin:
-        if not all(values.get(key) for key in ("appPassword", "otpPassword")):
-            print("pin needs both appPassword and otpPassword to seal", file=sys.stderr)
+        if not all(values.get(key) for key in SEALED):
+            print("pin needs " + ", ".join(SEALED) + " to seal", file=sys.stderr)
             return 1
         try:
-            values["sealed"] = seal.seal(values["appPassword"], values["otpPassword"], pin)
+            values["sealed"] = seal.seal(values["username"], values["appPassword"],
+                                         values["otpPassword"], pin)
         except ValueError as error:
             print(error, file=sys.stderr)
             return 1

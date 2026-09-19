@@ -179,10 +179,16 @@ function testAccountsAreGroupedByIssuer(logger as Logger) as Boolean {
 // itself. A low iteration count keeps the test quick; the count lives in the
 // blob, so the derivation does not care what it is.
 //
-//   ./tools/seal.py --pin 1357 --app-password app-pw --otp-password hunter2 \
-//       --iterations 1000 --salt 000102030405060708090a0b0c0d0e0f \
+//   ./tools/seal.py --pin 1357 --username alice --app-password app-pw \
+//       --otp-password hunter2 --iterations 1000 \
+//       --salt 000102030405060708090a0b0c0d0e0f \
 //       --iv 0f0e0d0c0b0a09080706050403020100
 const SEALED_BY_PYTHON =
+    "AgQAAAPoAAECAwQFBgcICQoLDA0ODw8ODQwLCgkIBwYFBAMCAQAmYEa/w4e8BJ3GIwpVtQKqyg5KpAut8EhGLtiJqQq6ww==";
+
+// The same credentials in the format that predates the login flow, when the
+// username was typed into the settings screen instead of being signed in for.
+const SEALED_VERSION_1 =
     "AQQAAAPoAAECAwQFBgcICQoLDA0ODw8ODQwLCgkIBwYFBAMCAQAwKz0ibkPuj1V2xhhoQp4WZURiEvltK3QftJILqyd47g==";
 
 (:test)
@@ -196,8 +202,18 @@ function testOpensABlobSealedByTheBuildTools(logger as Logger) as Boolean {
 
     var credentials = openWith(parsed, "1357");
     Test.assertMessage(credentials != null, "the right PIN did not open the blob");
+    Test.assertEqual((credentials as Credentials).username, "alice");
     Test.assertEqual((credentials as Credentials).appPassword, "app-pw");
     Test.assertEqual((credentials as Credentials).otpPassword, "hunter2");
+    return true;
+}
+
+// A blob from before the login flow cannot say who it belongs to, and the app
+// treats one as no credentials at all rather than guessing at a username.
+(:test)
+function testBlobsFromTheOldFormatAreRejected(logger as Logger) as Boolean {
+    Test.assertMessage(Sealed.parse(SEALED_VERSION_1) == null,
+        "a version 1 blob must not parse as a version 2 one");
     return true;
 }
 
@@ -219,7 +235,8 @@ function testSealRoundTripsOnTheWatch(logger as Logger) as Boolean {
     var salt = Sealed.salt();
     var key = derive("86420", salt, Sealed.ITERATIONS);
 
-    var encoded = Sealed.sealWithKey("nextcloud-app-password", "vault-password",
+    var encoded = Sealed.sealWithKey(
+        new Credentials("alice@example.com", "nextcloud-app-password", "vault-password"),
         5, salt, Sealed.iv(), key);
     Test.assertMessage(encoded != null, "sealing failed");
 
@@ -232,6 +249,7 @@ function testSealRoundTripsOnTheWatch(logger as Logger) as Boolean {
 
     var credentials = openWith(parsed, "86420");
     Test.assertMessage(credentials != null, "the PIN just used did not open the blob");
+    Test.assertEqual((credentials as Credentials).username, "alice@example.com");
     Test.assertEqual((credentials as Credentials).appPassword, "nextcloud-app-password");
     Test.assertEqual((credentials as Credentials).otpPassword, "vault-password");
 
@@ -247,6 +265,37 @@ function testOnlyFourToEightDigitsAreAPin(logger as Logger) as Boolean {
     Test.assertMessage(!Sealed.isPin("123456789"), "nine digits is too long");
     Test.assertMessage(!Sealed.isPin("12a4"), "a letter is not a digit");
     Test.assertMessage(!Sealed.isPin(""), "an empty PIN is not a PIN");
+    return true;
+}
+
+// What Nextcloud returns from /login/v2/poll once the wearer has granted
+// access, and the several shapes it can be that mean it has not.
+(:test)
+function testPollResponseYieldsCredentials(logger as Logger) as Boolean {
+    var credentials = NcLogin.signInFrom({
+        "server" => "https://cloud.example.com",
+        "loginName" => "alice@example.com",
+        "appPassword" => "aBcDe-fGhIj-kLmNo-pQrSt-uVwXy"
+    });
+
+    Test.assertMessage(credentials != null, "a complete poll response should yield credentials");
+    Test.assertEqual((credentials as SignIn).username, "alice@example.com");
+    Test.assertEqual((credentials as SignIn).appPassword, "aBcDe-fGhIj-kLmNo-pQrSt-uVwXy");
+    return true;
+}
+
+(:test)
+function testIncompletePollResponsesAreRejected(logger as Logger) as Boolean {
+    Test.assertMessage(NcLogin.signInFrom(null) == null,
+        "an empty body is not a sign-in");
+    Test.assertMessage(NcLogin.signInFrom("<html>") == null,
+        "a body that is not JSON is not a sign-in");
+    Test.assertMessage(NcLogin.signInFrom({ "loginName" => "alice" }) == null,
+        "a response with no app password is not a sign-in");
+    Test.assertMessage(NcLogin.signInFrom({ "appPassword" => "secret" }) == null,
+        "a response with no login name is not a sign-in");
+    Test.assertMessage(NcLogin.signInFrom({ "loginName" => "", "appPassword" => "secret" }) == null,
+        "an empty login name is not a sign-in");
     return true;
 }
 

@@ -3,20 +3,25 @@
 # Sideloaded Connect IQ apps cannot be configured from Garmin Connect or the
 # Connect IQ app — Garmin does not support settings for them. `./build.sh local`
 # therefore bakes these values into the build as property defaults.
+#
+# A store or beta install needs none of this: it is given the URL and the vault
+# password on the settings screen, and signs in for the rest.
 serverUrl=https://cloud.example.com
 
 # The Nextcloud *user ID*, which is not always a short name. On a server that
 # provisions users through OIDC it is often the email address. Whatever the
-# app-password screen shows as the login name is the right value.
+# app-password screen shows as the login name is the right value — and it is
+# what the watch's own sign-in returns, on a build that can use one.
 username=alice
 appPassword=xxxx-xxxx-xxxx-xxxx-xxxx
 otpPassword=your-otp-manager-vault-password
 
-# Optional, 4 to 8 digits. With a PIN set, the build seals both passwords under
-# it and the .prg carries ciphertext instead of credentials — and the watch asks
-# for the PIN once a day, and again whenever it has been off your wrist.
+# Optional, 4 to 8 digits. With a PIN set, the build seals every credential
+# under it and the .prg carries ciphertext instead of passwords — and the watch
+# asks for the PIN once a day, and again whenever it has been off your wrist.
 #
-# Leave it empty and both passwords are compiled into the .prg in the clear,
-# which is how this worked before the PIN existed. See the README on what the
-# PIN does and does not protect against.
+# The PIN itself is never written into the build: only the blob it opens.
+#
+# Leave it empty and the credentials are compiled into the .prg in the clear.
+# See the README on what the PIN does and does not protect against.
 pin=

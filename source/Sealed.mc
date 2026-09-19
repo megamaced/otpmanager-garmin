@@ -2,22 +2,27 @@ import Toybox.Cryptography;
 import Toybox.Lang;
 import Toybox.StringUtil;
 
-// Both credentials as one AES-256-CBC blob keyed on the wearer's PIN, so
-// neither the .prg nor the application properties hold a password in the clear.
-// tools/seal.py produces the identical format at build time for sideloads.
+// Everything the app needs to reach the vault, as one AES-256-CBC blob keyed
+// on the wearer's PIN, so that neither the .prg nor any store holds a password
+// in the clear. tools/seal.py produces the identical format at build time for
+// sideloads.
 //
 //   version:1  pinLength:1  iterations:4 (big endian)  salt:16  iv:16  ct:16n
 //
 // and inside the ciphertext, PKCS#7 padded to the block size:
 //
-//   "OTPM"  length:1 appPassword  length:1 otpPassword
+//   "OTPM"  length:1 username  length:1 appPassword  length:1 otpPassword
 //
 // The magic is what rejects a wrong PIN. The upstream vault format has no such
 // marker and has to infer a bad password from implausible padding; this format
 // is ours to define, so it can simply say no.
 module Sealed {
 
-    const VERSION = 1;
+    // Version 1 carried only the two passwords, from back when the username
+    // was typed into the settings screen rather than returned by a sign-in.
+    // Such a blob is rejected rather than migrated: it cannot say who it
+    // belongs to, and signing in again is two taps.
+    const VERSION = 2;
     const HEADER_SIZE = 38;
     const SALT_SIZE = 16;
     const IV_SIZE = 16;
@@ -65,7 +70,7 @@ module Sealed {
             cipherText);
     }
 
-    // Used when the PIN was typed into Garmin Connect rather than compiled in.
+    // Used whenever the PIN was chosen on the watch rather than compiled in.
     // The key is passed in rather than derived here: deriving it takes about as
     // long as everything else this app does put together, and it belongs on the
     // PIN screen's timer where it cannot block long enough to be killed.
@@ -73,15 +78,17 @@ module Sealed {
     // The salt must be the one the key was derived from, and the caller owns
     // both — they are fresh per seal, so the same credentials under the same
     // PIN produce a different blob each time.
-    function sealWithKey(appPassword as String, otpPassword as String, pinLength as Number,
+    function sealWithKey(credentials as Credentials, pinLength as Number,
                          salt as ByteArray, iv as ByteArray, key as ByteArray) as String? {
-        var app = utf8(appPassword);
-        var otp = utf8(otpPassword);
-        if (app.size() > 255 || otp.size() > 255) {
+        var user = utf8(credentials.username);
+        var app = utf8(credentials.appPassword);
+        var otp = utf8(credentials.otpPassword);
+        if (user.size() > 255 || app.size() > 255 || otp.size() > 255) {
             return null;
         }
 
         var body = magic()
+            .add(user.size()).addAll(user)
             .add(app.size()).addAll(app)
             .add(otp.size()).addAll(otp);
 
@@ -215,7 +222,7 @@ class SealedBlob {
     // happened to pad plausibly must not be able to index past the end.
     private function unpack(body as ByteArray) as Credentials? {
         var magic = Sealed.magic();
-        if (body.size() < magic.size() + 2) {
+        if (body.size() < magic.size() + 3) {
             return null;
         }
         for (var i = 0; i < magic.size(); i++) {
@@ -225,6 +232,14 @@ class SealedBlob {
         }
 
         var at = magic.size();
+        var userLength = body[at];
+        at++;
+        if (at + userLength + 2 > body.size()) {
+            return null;
+        }
+        var user = body.slice(at, at + userLength);
+
+        at += userLength;
         var appLength = body[at];
         at++;
         if (at + appLength + 1 > body.size()) {
@@ -240,7 +255,7 @@ class SealedBlob {
         }
         var otp = body.slice(at, at + otpLength);
 
-        return new Credentials(text(app), text(otp));
+        return new Credentials(text(user), text(app), text(otp));
     }
 
     private function text(bytes as ByteArray) as String {
@@ -251,14 +266,21 @@ class SealedBlob {
     }
 }
 
+// The three things the app cannot work without, and the unit a seal is made of.
 class Credentials {
 
+    var username as String;
     var appPassword as String;
     var otpPassword as String;
 
-    function initialize(appPassword as String, otpPassword as String) {
+    function initialize(username as String, appPassword as String, otpPassword as String) {
+        self.username = username;
         self.appPassword = appPassword;
         self.otpPassword = otpPassword;
+    }
+
+    function isComplete() as Boolean {
+        return !username.equals("") && !appPassword.equals("") && !otpPassword.equals("");
     }
 }
 

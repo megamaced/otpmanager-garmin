@@ -2,8 +2,17 @@ import Toybox.Application;
 import Toybox.Lang;
 import Toybox.StringUtil;
 
-// The values the user fills in from Garmin Connect / Garmin Express. The two
-// passwords are empty until the PIN opens them, on a build that has one.
+// What the app is configured with, gathered from three sources that each own a
+// different part of it:
+//
+//   the settings screen   the Nextcloud URL, and the vault password
+//   signing in            the login name and the app password
+//   the seal              all three of those, once a PIN exists
+//
+// Only the first is typed on a phone. The login name and app password are never
+// typed anywhere: Login Flow v2 returns them and they go straight to watch
+// storage, which — unlike the properties behind the settings screen — does not
+// sync anywhere.
 class Config {
 
     var serverUrl as String;
@@ -13,23 +22,29 @@ class Config {
 
     function initialize() {
         serverUrl = trimTrailingSlash(read("serverUrl"));
-        username = read("username");
-        appPassword = read("appPassword");
-        otpPassword = read("otpPassword");
 
-        // A sealed build must never fall back on plaintext left behind by an
-        // install that predates the PIN: a stale .SET would quietly unlock it.
-        if (!read("sealed").equals("") && read("pin").equals("")) {
+        // Sealed, and so empty until the PIN opens the blob. The vault password
+        // included: sealing cleared it from the settings screen, and the copy
+        // inside the blob is the only one left.
+        if (isSealed()) {
+            username = "";
             appPassword = "";
             otpPassword = "";
+            return;
         }
+
+        username = CredentialStore.username();
+        appPassword = CredentialStore.appPassword();
+        otpPassword = read("otpPassword");
     }
 
-    // Null on a build with no PIN, where the credentials are in the properties
-    // in the clear — which is how this app worked before the PIN existed, and
-    // still the default for a build that does not ask for one.
+    function isSealed() as Boolean {
+        return !CredentialStore.sealedText().equals("");
+    }
+
+    // Null on a build with no PIN, where the credentials are held as they are.
     function sealedBlob() as SealedBlob? {
-        var encoded = read("sealed");
+        var encoded = CredentialStore.sealedText();
         if (encoded.equals("")) {
             return null;
         }
@@ -37,50 +52,40 @@ class Config {
     }
 
     function unlock(credentials as Credentials) as Void {
+        username = credentials.username;
         appPassword = credentials.appPassword;
         otpPassword = credentials.otpPassword;
     }
 
-    // A PIN typed into Garmin Connect and not yet acted on. Garmin Connect is
-    // the only place a store or beta build can be given one, and it keeps
-    // whatever it is given in the clear, so this is a state to get out of
-    // rather than one to stay in. Empty on a sideload, which seals at build
-    // time and never has a plaintext stage at all.
-    function pendingPin() as String {
-        return read("pin");
+    function credentials() as Credentials {
+        return new Credentials(username, appPassword, otpPassword);
     }
 
-    function canSeal() as Boolean {
-        return Sealed.isPin(pendingPin())
-            && !appPassword.equals("")
-            && !otpPassword.equals("");
+    // A vault password sitting in the settings screen while a seal already
+    // holds one. It means the wearer is changing it — there is no other way to,
+    // since the field is blanked the moment it is sealed — so the next unlock
+    // re-seals under it and blanks the field again.
+    function pendingOtpPassword() as String {
+        return read("otpPassword");
     }
 
-    // Stores the seal and clears every plaintext it replaces, including the PIN
-    // itself. Deliberately not done at launch: the wearer retypes the PIN on
-    // the watch first, so a typo in Garmin Connect cannot take the only copy of
-    // the credentials with it.
-    function completeSeal(blob as String) as Void {
-        Application.Properties.setValue("sealed", blob);
-        Application.Properties.setValue("pin", "");
-        Application.Properties.setValue("appPassword", "");
+    function clearPendingOtpPassword() as Void {
         Application.Properties.setValue("otpPassword", "");
-
-        // Any earlier unlock belongs to credentials that are no longer current.
-        PinLock.forget();
     }
 
-    // Enough to know which server to talk to, whether or not the credentials
-    // for it have been unsealed yet.
+    // Enough to know which server to sign in to, whether or not there is yet
+    // anything to sign in with.
     function hasServer() as Boolean {
-        return !serverUrl.equals("") && !username.equals("");
+        return !serverUrl.equals("");
+    }
+
+    // A completed sign-in, held in the clear or opened from a seal.
+    function hasCredentials() as Boolean {
+        return !username.equals("") && !appPassword.equals("");
     }
 
     function isComplete() as Boolean {
-        return !serverUrl.equals("")
-            && !username.equals("")
-            && !appPassword.equals("")
-            && !otpPassword.equals("");
+        return hasServer() && hasCredentials() && !otpPassword.equals("");
     }
 
     // Connect IQ refuses plain HTTP outright, so this cannot leak a credential
