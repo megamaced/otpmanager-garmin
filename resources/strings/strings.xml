@@ -1,5 +1,5 @@
 <resources>
-    <string id="AppName">OTP Manager</string>
+    <string id="AppName">NC OTP Manager</string>
 
     <string id="SettingServerUrl">Nextcloud URL</string>
     <string id="SettingOtpPassword">OTP Manager password</string>

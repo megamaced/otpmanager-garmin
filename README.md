@@ -1,4 +1,4 @@
-# OTP Manager for Garmin
+# NC OTP Manager
 
 A Connect IQ watch app that reads your
 [Nextcloud OTP Manager](https://github.com/matteo-convertino/otpmanager-nextcloud)
