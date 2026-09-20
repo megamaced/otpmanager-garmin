@@ -531,6 +531,21 @@ function assertDiffers(base as String?, other as String?, what as String) as Voi
         "changing " + what + " must change the encoding");
 }
 
+// The vault password is typed for one server and posted to whatever server the
+// app is pointed at, so it has to be left behind when the app moves.
+(:test)
+function testSigningInElsewhereLeavesTheVaultPasswordBehind(logger as Logger) as Boolean {
+    Test.assertMessage(CredentialStore.movesServer("https://a.example.com", "https://b.example.com"),
+        "a different host is a move");
+    Test.assertMessage(!CredentialStore.movesServer("https://a.example.com", "https://A.EXAMPLE.com/nextcloud"),
+        "the same origin in different words is not a move");
+    Test.assertMessage(!CredentialStore.movesServer("", "https://b.example.com"),
+        "a sideload has nowhere to move from: its server is compiled in");
+    Test.assertMessage(CredentialStore.movesServer("https://a.example.com", "https://a.example.com:8443"),
+        "a different port is a different server");
+    return true;
+}
+
 function base64(bytes as ByteArray) as String {
     return StringUtil.convertEncodedString(bytes, {
         :fromRepresentation => StringUtil.REPRESENTATION_BYTE_ARRAY,

@@ -243,6 +243,11 @@ class OtpManagerApp extends Application.AppBase {
     function signOut() as Void {
         cancelSignIn();
         CredentialStore.clear();
+
+        // Including the vault password on the settings screen. Leaving it there
+        // would hand it to whichever server was signed in to next, and "sign
+        // out" that leaves a password behind is not what it says.
+        CredentialStore.clearOtpPassword();
         PinLock.forget();
         AccountStore.clearCache();
 

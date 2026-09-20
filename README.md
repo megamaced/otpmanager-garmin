@@ -168,9 +168,10 @@ Nothing else is typed. Your login name and a fresh Nextcloud app password come
 back from the server and stay on the watch.
 
 **Options**, at the bottom of the account list, also has **Sign out** — which
-forgets the credentials and the cached accounts and returns you to the sign-in
-screen. To change your vault password later, type the new one into the settings
-screen; the next unlock picks it up.
+forgets the credentials and the cached accounts, clears the vault password off
+the settings screen, and returns you to the sign-in screen. To change your vault
+password later, type the new one into the settings screen; the next unlock picks
+it up.
 
 ## Locking it with a PIN
 

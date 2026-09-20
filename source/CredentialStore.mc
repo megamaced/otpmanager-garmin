@@ -20,6 +20,7 @@ module CredentialStore {
     const SERVER = "boundServer";
     const USERNAME = "username";
     const APP_PASSWORD = "appPassword";
+    const OTP_PASSWORD = "otpPassword";
 
     // Compiled in by tools/bake-properties.py and by nothing else: it has no
     // settings entry, so there is nothing that can type one, and a build that
@@ -99,11 +100,37 @@ module CredentialStore {
             || !baked("appPassword").equals("");
     }
 
+    // Whether signing in to `server` moves the app to a different host from the
+    // one the credentials were last bound to. An empty binding is a sideload,
+    // which cannot move: its server is compiled in beside everything else.
+    function movesServer(previous as String, server as String) as Boolean {
+        return !previous.equals("") && !Config.sameOrigin(previous, server);
+    }
+
+    // The vault password, off the settings screen.
+    //
+    // Not on a build that compiled one in: there is no settings screen there to
+    // type it back into, and its server is baked beside it, so it cannot end up
+    // being offered to a host it was not meant for.
+    function clearOtpPassword() as Void {
+        if (isBakedBuild()) {
+            return;
+        }
+        Application.Properties.setValue(OTP_PASSWORD, "");
+    }
+
     // What a sign-in produces. In the clear, because until a PIN exists there
-    // is nothing to encrypt under — but on the watch only, and the vault
-    // password is not here: that one is typed into the settings screen and
-    // stays there until a seal replaces it.
+    // is nothing to encrypt under — but on the watch only.
     function storeSignIn(server as String, username as String, appPassword as String) as Void {
+        // The vault password is typed on the settings screen rather than
+        // returned by the sign-in, so nothing here replaces it — and it belongs
+        // to the server it was typed for just as much as the app password does.
+        // /password/check posts it in the clear on the very next refresh, so
+        // signing in somewhere else has to leave it behind.
+        if (movesServer(boundServer(), server)) {
+            clearOtpPassword();
+        }
+
         Application.Storage.setValue(SERVER, server);
         Application.Storage.setValue(USERNAME, username);
         Application.Storage.setValue(APP_PASSWORD, appPassword);
@@ -136,8 +163,12 @@ module CredentialStore {
     // that compiled its own in never reaches this.
     function clearProperties() as Void {
         Application.Properties.setValue("sealed", "");
-        Application.Properties.setValue("username", "");
-        Application.Properties.setValue("appPassword", "");
+        Application.Properties.setValue(USERNAME, "");
+        Application.Properties.setValue(APP_PASSWORD, "");
+
+        // The vault password goes with them. Which server it was typed for is
+        // exactly as unknown as who issued the app password beside it.
+        clearOtpPassword();
     }
 
     function clear() as Void {
